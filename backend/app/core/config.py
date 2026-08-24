@@ -5,14 +5,17 @@ developer laptop to production without code changes.
 """
 from __future__ import annotations
 
+import json
 import os
 import secrets
 from functools import lru_cache
 from pathlib import Path
 from typing import List
 
+from typing import Annotated
+
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
@@ -32,7 +35,11 @@ class Settings(BaseSettings):
     secret_key: str = Field(default_factory=lambda: os.getenv("SECRET_KEY") or secrets.token_urlsafe(48))
     access_token_expire_minutes: int = 60 * 12
     algorithm: str = "HS256"
-    cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:5173", "http://localhost:3000"])
+    # NoDecode stops pydantic-settings from trying to JSON-decode the value, so
+    # the documented comma-separated form works instead of crashing at startup.
+    cors_origins: Annotated[List[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://localhost:3000"]
+    )
     allow_registration: bool = True
 
     # --- Storage -----------------------------------------------------------
@@ -69,9 +76,16 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v):
-        if isinstance(v, str):
-            return [o.strip() for o in v.split(",") if o.strip()]
-        return v
+        """Accept a comma-separated list or a JSON array."""
+        if not isinstance(v, str):
+            return v
+        text = v.strip()
+        if text.startswith("["):
+            try:
+                return [str(o).strip() for o in json.loads(text) if str(o).strip()]
+            except json.JSONDecodeError:
+                pass
+        return [o.strip() for o in text.split(",") if o.strip()]
 
     @field_validator("storage_dir", mode="before")
     @classmethod

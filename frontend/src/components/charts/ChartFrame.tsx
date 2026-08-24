@@ -31,14 +31,23 @@ export function ChartFrame({ chart, children, table, compact = false }: Props) {
     const clone = source.cloneNode(true) as SVGSVGElement
     const root = getComputedStyle(document.documentElement)
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    clone.removeAttribute('style')
     clone.style.background = `rgb(${root.getPropertyValue('--surface').trim()})`
-    clone.querySelectorAll<SVGElement>('*').forEach((node) => {
-      const computed = getComputedStyle(node)
-      for (const property of ['fill', 'stroke', 'stroke-width', 'font-size', 'font-family']) {
+
+    // Styles must be read from the live nodes: getComputedStyle on a detached
+    // clone returns nothing, which would silently drop every CSS-driven colour
+    // (axis labels among them) and leave them black on any background.
+    const PAINTED = 'path, line, rect, circle, ellipse, polyline, polygon, text, tspan'
+    const live = source.querySelectorAll<SVGElement>(PAINTED)
+    const copied = clone.querySelectorAll<SVGElement>(PAINTED)
+    for (let index = 0; index < live.length && index < copied.length; index += 1) {
+      const computed = getComputedStyle(live[index])
+      for (const property of ['fill', 'stroke', 'stroke-width', 'stroke-opacity',
+        'fill-opacity', 'font-size', 'font-family', 'font-weight']) {
         const value = computed.getPropertyValue(property)
-        if (value && value !== 'none') node.style.setProperty(property, value)
+        if (value) copied[index].style.setProperty(property, value)
       }
-    })
+    }
     const blob = new Blob(
       ['<?xml version="1.0" encoding="UTF-8"?>\n', new XMLSerializer().serializeToString(clone)],
       { type: 'image/svg+xml' },

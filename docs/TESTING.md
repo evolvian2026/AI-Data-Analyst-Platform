@@ -1,21 +1,33 @@
 # Testing
 
-160 tests covering the areas the product specification calls out. They run in
-under a minute against real generated workbooks — no mocked dataframes — so a
-passing suite means the pipeline genuinely works end to end.
+Three layers:
+
+| Layer | What it proves | How to run |
+|---|---|---|
+| **191 backend tests** | Every engine behaves, the API contract holds, and — in `test_e2e.py` — every reported figure matches an independent pandas recomputation of the source workbook. | `cd backend && pytest` |
+| **84 browser checks** | The real production bundle works for a real user: routing, rendering, charts, downloads, theme, responsive layout, isolation. | `cd frontend && npm run e2e` |
+| **Type checking** | The frontend compiles under strict TypeScript. | `cd frontend && npm run lint` |
+
+They run against real generated workbooks — no mocked dataframes — so a passing
+suite means the pipeline genuinely works.
 
 ```bash
 cd backend
 pytest                              # everything
+pytest tests/test_e2e.py -v         # the journey and the verification layer
 pytest tests/test_security.py -v    # one area
 pytest -k "insight or story"        # by name
 pytest -x --lf                      # stop at the first failure, rerun last failures
 ```
 
+The browser journey needs a running API and a built frontend; see
+[`frontend/e2e/README.md`](../frontend/e2e/README.md) for the three commands.
+
 ```bash
 cd frontend
 npm run lint                        # TypeScript, strict mode
 npm run build
+npm run e2e                         # 84 checks against the built bundle
 ```
 
 ---
@@ -31,6 +43,7 @@ npm run build
 | `test_reports.py` | 14 | PDF generation for every style, page-count ranges, cover customisation, page numbers, table of contents, section selection, chart rendering, Excel sheet contents, formula-injection escaping. |
 | `test_security.py` | 35 | Prompt injection detection and neutralisation, data-block isolation, injection through workbook cells, question safety, formula injection, path traversal, authentication, account enumeration, cross-user isolation, malicious and oversized uploads, AI verification, security headers. |
 | `test_api.py` | 24 | Registration and login, pipeline progress, the analysis payload, chart rationale, Ask Your Data, filters, drill-down, anomaly investigation, audience adaptation, data exploration, downloads, sharing, re-analysis, samples, deletion, retention. |
+| `test_e2e.py` | 31 | The complete journey through the API in the order a user performs it; **independent verification of every reported figure against pandas**; all five samples through the full journey including all three report styles; failure paths; and the deployment settings that only break once deployed. |
 
 ---
 
@@ -83,6 +96,45 @@ reported as a quality issue, and never appears in the analysis output.
 
 ---
 
+## The verification layer
+
+`test_e2e.py` recomputes what the platform reports, from the source workbook,
+using plain pandas — because a pipeline can be internally consistent and still
+be wrong:
+
+```python
+def test_segment_totals_match_a_groupby(client, auth_headers, journey, source_frame):
+    segment = ...                                   # what the platform says
+    expected = source_frame.groupby("Region")["Revenue"].sum()   # the truth
+
+    # Every group must be present, not merely every reported group correct.
+    assert {g["group"] for g in segment["groups"]} == set(expected.index)
+    assert sum(g["count"] for g in segment["groups"]) == len(source_frame)
+    for group in segment["groups"]:
+        assert group["value"] == pytest.approx(float(expected[group["group"]]), rel=1e-9)
+```
+
+The same treatment covers KPI totals, derived margins, trend series against a
+resample, correlations against `Series.corr`, descriptive statistics, quality
+metrics, filtered analyses, drill-down, Ask Your Data answers, the exported CSV,
+the exported workbook and the figures printed in the PDF.
+
+Three structural checks catch a whole class of error at once: no reported total
+may exceed the sum of its own column, no insight or chart may cite a column that
+does not exist, and no finding may claim more records than the dataset has.
+
+### These assertions were checked by mutation
+
+A verification test that cannot fail is worse than none. Two deliberate bugs
+were introduced to confirm these bite:
+
+| Mutation | Result |
+|---|---|
+| Inflate every summed KPI by 0.5% | Caught — KPI totals and the Excel export both failed. |
+| Drop the last group from every segment comparison | **Survived at first.** The test checked that reported groups were correct but never that all groups were reported. The assertion was strengthened, and the mutation then failed it. |
+
+---
+
 ## Fixtures
 
 `tests/conftest.py` builds real workbooks:
@@ -123,6 +175,23 @@ For API tests, use the `client` and `auth_headers` fixtures and the
 
 ---
 
+## The browser journey
+
+`frontend/e2e/journey.mjs` drives the production bundle against a running API
+and asserts on what a user sees. See [`frontend/e2e/README.md`](../frontend/e2e/README.md)
+for the full list. Several checks assert a *refusal*, which is the point:
+
+* An audience change must alter the depth of explanation and leave every
+  headline byte-identical.
+* Anomaly investigation must say "association" or "not causation".
+* A prompt-injection question must not surface the system prompt.
+* A second account must get "not found", not an empty dashboard.
+
+Console errors are part of the pass condition. A clean run is
+`84 passed / 0 failed / 0 console errors`.
+
+---
+
 ## Bugs this suite has already caught
 
 Worth knowing, because they are the kind that ship silently:
@@ -142,3 +211,16 @@ Worth knowing, because they are the kind that ship silently:
 * **Legend positioning silently failed** in the PDF (`deltaX` is not a valid
   ReportLab attribute), which the chart-rendering test caught by asserting that
   every chart type renders.
+
+And from the end-to-end layers:
+
+* **`CORS_ORIGINS` crashed the API on startup** when given the comma-separated
+  value documented in `.env.example` and docker-compose. pydantic-settings tries
+  to JSON-decode a `List[str]` from the environment before any validator runs,
+  so the documented deployment configuration could not boot. Found by actually
+  starting the server the way the docs say to.
+* **SVG chart export silently dropped every CSS-driven colour.** Computed styles
+  were read from a detached clone, where `getComputedStyle` returns nothing, so
+  the inlining loop wrote no styles at all. Axis labels fell back to black —
+  invisible against a dark background. The exported file *looked* fine because
+  Recharts also writes presentation attributes for the marks themselves.

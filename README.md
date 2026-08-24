@@ -183,21 +183,22 @@ figure against the calculated results before it is used.
 
 ```bash
 cd backend
-pytest                      # the whole suite
+pytest                      # 191 tests
+pytest tests/test_e2e.py    # the journey, plus verification against pandas
 pytest tests/test_security.py -v
-pytest -k "insight or story"
 ```
-
-160 tests across the areas the product specification calls out — file
-processing, data profiling, analytics, the insight engine, the Data Story,
-PDF/Excel reports, security and the HTTP API. See
-[`docs/TESTING.md`](docs/TESTING.md).
 
 ```bash
 cd frontend
 npm run lint                # TypeScript, strict mode
 npm run build
+npm run e2e                 # 84 browser checks against the built bundle
 ```
+
+Three layers: engine and API tests, an end-to-end suite that recomputes every
+reported figure from the source workbook with plain pandas, and a browser
+journey that drives the production bundle. See
+[`docs/TESTING.md`](docs/TESTING.md).
 
 ---
 
