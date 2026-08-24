@@ -84,6 +84,30 @@ def _fmt(value: Any, semantic: str, currency: str) -> str:
     return format_value(value, semantic, currency)
 
 
+def _trend_caption(trend: dict[str, Any], classification: dict[str, Any], measure: str) -> str:
+    """Describe the series without contradicting itself.
+
+    A series can end well below where it started and still have no significant
+    trend, so "stable (-41%)" has to be said as two separate facts.
+    """
+    direction = classification.get("direction", "stable")
+    change = trend.get("total_change_pct")
+    label = trend.get("aggregation_label", "Total")
+    if direction in {"increasing", "decreasing"} and change is not None:
+        return (
+            f"{label} {measure} is {direction}: {change:+.1f}% from {trend['first_period']} to "
+            f"{trend['last_period']}."
+        )
+    if direction == "stable":
+        ending = (
+            f" It ended the period {change:+.1f}% against its first {trend['unit']}, but the "
+            f"movement is within the normal variation of this series."
+            if change is not None else ""
+        )
+        return f"{label} {measure} shows no statistically significant trend.{ending}"
+    return f"{label} {measure} has too few periods to establish a trend."
+
+
 def build_charts(
     df: pd.DataFrame,
     context: dict[str, Any],
@@ -136,11 +160,7 @@ def build_charts(
             ],
             x_key="name",
             series=[{"key": "value", "label": measure}],
-            insight=(
-                f"{measure} is {classification.get('direction', 'stable')} "
-                f"({trend.get('total_change_pct', 0):+.1f}% from {trend['first_period']} to "
-                f"{trend['last_period']})."
-            ),
+            insight=_trend_caption(trend, classification, measure),
             value_format=semantic,
             drilldown={"type": "period", "measure": measure, "time_column": trend["time_column"]},
             priority=95 - len(builder.charts),
@@ -231,12 +251,16 @@ def build_charts(
                 for row in item["pareto"]
             ],
             x_key="name",
+            # Both series are percentages of the same total, so they share one
+            # axis - a second y-scale would let the reader compare two
+            # incompatible scales by eye.
             series=[
-                {"key": "value", "label": item["measure"]},
-                {"key": "cumulative", "label": "Cumulative %", "axis": "right", "type": "line"},
+                {"key": "share", "label": f"Share of {item['measure']} %", "type": "bar"},
+                {"key": "cumulative", "label": "Cumulative %", "type": "line"},
             ],
             insight=item["narrative"],
-            value_format=semantic,
+            value_format=P.PERCENTAGE,
+            extra={"measure_format": semantic},
             drilldown={"type": "dimension", "dimension": item["dimension"],
                        "measure": item["measure"]},
             priority=88,
@@ -664,6 +688,9 @@ def _ratio_by_dimension(df: pd.DataFrame, profile: dict[str, Any], measures: lis
         for index, row in grouped.iterrows()
     ]
     spread = float(grouped["ratio"].max() - grouped["ratio"].min())
+    # If every group converts at the same rate the chart answers nothing.
+    if spread < 2.0:
+        return None
     return builder.add(
         chart_type=BAR,
         title=f"{numerator} margin by {dimension}",

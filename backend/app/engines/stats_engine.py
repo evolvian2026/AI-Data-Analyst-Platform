@@ -8,7 +8,7 @@ import pandas as pd
 from scipy import stats as scipy_stats
 
 from app.engines import profiler as P
-from app.engines.formatting import format_value, safe_float
+from app.engines.formatting import compact_number, format_value, safe_float
 
 PERCENTILES = [1, 5, 10, 25, 50, 75, 90, 95, 99]
 
@@ -60,7 +60,8 @@ def histogram(series: pd.Series, bins: int = 20) -> list[dict[str, Any]]:
     counts, edges = np.histogram(values, bins=bins)
     return [
         {
-            "bin": f"{edges[i]:,.4g} – {edges[i + 1]:,.4g}",
+            # Compact labels: "6.2K – 11.1K" reads on an axis, "6.15e+03" does not.
+            "bin": f"{compact_number(float(edges[i]))} – {compact_number(float(edges[i + 1]))}",
             "start": safe_float(edges[i]),
             "end": safe_float(edges[i + 1]),
             "count": int(counts[i]),

@@ -91,9 +91,9 @@ def detect_derived_columns(df: pd.DataFrame, profile: dict[str, Any]) -> list[di
         if best:
             best["match_ratio"] = round(best["match_ratio"], 4)
             best["narrative"] = (
-                f"{best['column']} is the {best['operation']} of "
-                f"{', '.join(best['sources'])} in {best['match_ratio'] * 100:.0f}% of records "
-                f"({best['formula']}), so it carries no information those columns do not."
+                f"{best['formula']} holds in {best['match_ratio'] * 100:.0f}% of records, so "
+                f"{best['column']} carries no information that "
+                f"{' and '.join(best['sources'])} do not."
             )
             findings.append(best)
             involved.add(target)

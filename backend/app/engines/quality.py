@@ -328,8 +328,8 @@ def assess_quality(
                 "title": f"{outliers['total']:,} statistical outlier(s) detected",
                 "detail": f"Outliers were found in {len(outliers.get('columns', []))} numeric "
                           f"column(s) using the IQR and modified z-score methods.",
-                "impact": "Averages and totals are sensitive to these records. The report reports "
-                          "both mean and median so you can see the difference.",
+                "impact": "Averages and totals are sensitive to these records, which is why every "
+                          "distribution in this analysis shows the median alongside the mean.",
                 "affected_records": int(outliers["total"]),
                 "affected_pct": round(outliers["total"] / max(row_count, 1) * 100, 2),
             }

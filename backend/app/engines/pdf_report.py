@@ -198,7 +198,9 @@ def draw_chart(chart: dict[str, Any], width: float = CONTENT_WIDTH,
     try:
         if kind in {"line", "area"}:
             return _line_chart(chart, width, height)
-        if kind in {"bar", "histogram", "pareto"}:
+        if kind == "pareto":
+            return _pareto_chart(chart, width, height)
+        if kind in {"bar", "histogram"}:
             return _bar_chart(chart, width, height)
         if kind == "horizontal_bar":
             return _horizontal_bar_chart(chart, width, height)
@@ -274,6 +276,55 @@ def _bar_chart(chart, width, height) -> Drawing:
     return drawing
 
 
+def _pareto_chart(chart, width, height) -> Drawing:
+    """Share and cumulative share on a single percentage axis."""
+    drawing = Drawing(width, height)
+    data = chart["data"][:12]
+    shares = _numeric([row.get("share") for row in data])
+    cumulative = _numeric([row.get("cumulative") for row in data])
+    graph = VerticalBarChart()
+    graph.x, graph.y = 34, 30
+    graph.width, graph.height = width - 50, height - 48
+    graph.data = [shares]
+    graph.bars[0].fillColor = SERIES_COLORS[0]
+    graph.bars[0].strokeColor = None
+    graph.categoryAxis.categoryNames = [_short(row.get("name"), 12) for row in data]
+    graph.categoryAxis.labels.fontSize = 6.4
+    graph.categoryAxis.labels.angle = 25
+    graph.categoryAxis.labels.dy = -6
+    graph.categoryAxis.labels.boxAnchor = "ne"
+    graph.valueAxis.valueMin = 0
+    graph.valueAxis.valueMax = 100
+    graph.valueAxis.labelTextFormat = lambda v: f"{v:.0f}%"
+    graph.valueAxis.labels.fontSize = 6.6
+    drawing.add(graph)
+
+    line = HorizontalLineChart()
+    line.x, line.y = graph.x, graph.y
+    line.width, line.height = graph.width, graph.height
+    line.data = [cumulative]
+    line.lines[0].strokeColor = SERIES_COLORS[1]
+    line.lines[0].strokeWidth = 2
+    line.categoryAxis.visible = 0
+    line.valueAxis.visible = 0
+    line.valueAxis.valueMin = 0
+    line.valueAxis.valueMax = 100
+    drawing.add(line)
+
+    legend = Legend()
+    legend.x, legend.y = 34, height - 4
+    legend.fontSize = 6.6
+    legend.columnMaximum = 1
+    legend.deltax = 96
+    legend.dxTextSpace = 3
+    legend.boxAnchor = "nw"
+    legend.colorNamePairs = [
+        (SERIES_COLORS[0], "Share %"), (SERIES_COLORS[1], "Cumulative %"),
+    ]
+    drawing.add(legend)
+    return drawing
+
+
 def _horizontal_bar_chart(chart, width, height) -> Drawing:
     data = chart["data"][:12]
     height = max(height, 10 * len(data) + 26)
@@ -315,7 +366,7 @@ def _donut_chart(chart, width, height) -> Drawing:
     legend.x, legend.y = height + 16, height - 16
     legend.fontSize = 6.8
     legend.dxTextSpace = 4
-    legend.deltaY = 9
+    legend.deltay = 9
     legend.columnMaximum = 8
     legend.colorNamePairs = [
         (SERIES_COLORS[index % len(SERIES_COLORS)],
@@ -357,7 +408,7 @@ def _stacked_chart(chart, width, height) -> Drawing:
     legend.fontSize = 6.6
     legend.alignment = "right"
     legend.columnMaximum = 1
-    legend.deltaX = 68
+    legend.deltax = 68
     legend.dxTextSpace = 3
     legend.boxAnchor = "nw"
     legend.colorNamePairs = [

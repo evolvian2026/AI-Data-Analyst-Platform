@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -63,7 +64,7 @@ def _set_progress(session_id: str, snapshot: dict[str, Any]) -> None:
         if session:
             session.progress = snapshot
             db.commit()
-    except Exception:  # noqa: BLE001 - progress must never fail the analysis
+    except (StaleDataError, Exception):  # noqa: BLE001 - progress must never fail the analysis
         db.rollback()
     finally:
         db.close()
@@ -112,6 +113,11 @@ def run_analysis(session_id: str, sheet: str | None = None) -> None:
         _fail(db, session_id,
               "The workbook is too large to analyse in the available memory. Try analysing a "
               "single sheet, or reduce the number of rows.")
+    except StaleDataError:
+        # The session was deleted while its analysis was still running; there is
+        # nothing left to write the result to.
+        db.rollback()
+        logger.info("analysis discarded, session removed: %s", session_id)
     except Exception as exc:  # noqa: BLE001 - surfaced to the user as a failed session
         logger.exception("analysis failed session=%s", session_id)
         _fail(db, session_id, f"Analysis failed: {exc}")

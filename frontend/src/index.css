@@ -1,0 +1,139 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Design tokens. The categorical series palette is the validated eight-slot
+  order: hues are assigned by slot in fixed order and never cycled, and the dark
+  column is the same hues re-stepped for the dark surface rather than a flip.
+*/
+@layer base {
+  :root {
+    color-scheme: light;
+    --page: 249 249 247;
+    --surface: 252 252 251;
+    --raised: 255 255 255;
+    --ink: 11 11 11;
+    --subtle: 82 81 78;
+    --muted: 137 135 129;
+    --line: 225 224 217;
+    --accent: 42 120 214;
+    --accent-ink: 255 255 255;
+    --good: 12 163 12;
+    --warning: 250 178 25;
+    --serious: 236 131 90;
+    --critical: 208 59 59;
+
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #4a3aa7;
+    --series-8: #e34948;
+
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --seq-100: #cde2fb;
+    --seq-400: #3987e5;
+    --seq-700: #0d366b;
+    --diverge-low: #2a78d6;
+    --diverge-mid: #f0efec;
+    --diverge-high: #d03b3b;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --page: 13 13 13;
+    --surface: 26 26 25;
+    --raised: 34 34 32;
+    --ink: 255 255 255;
+    --subtle: 195 194 183;
+    --muted: 137 135 129;
+    --line: 44 44 42;
+    --accent: 57 135 229;
+    --accent-ink: 255 255 255;
+    --good: 12 163 12;
+    --warning: 250 178 25;
+    --serious: 236 131 90;
+    --critical: 208 59 59;
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --seq-100: #104281;
+    --seq-400: #3987e5;
+    --seq-700: #cde2fb;
+    --diverge-low: #3987e5;
+    --diverge-mid: #383835;
+    --diverge-high: #e66767;
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    @apply bg-page text-ink font-sans antialiased;
+    margin: 0;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2;
+    --tw-ring-offset-color: rgb(var(--page));
+  }
+
+  ::selection { background: rgb(var(--accent) / 0.22); }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-surface shadow-card;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm
+           font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary { @apply btn bg-accent text-accent-ink hover:brightness-110; }
+  .btn-secondary { @apply btn border border-line bg-surface text-ink hover:bg-page; }
+  .btn-ghost { @apply btn text-subtle hover:bg-page hover:text-ink; }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1
+           text-xs font-medium text-subtle;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink
+           placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1
+           focus:ring-accent;
+  }
+
+  .label { @apply mb-1.5 block text-xs font-medium uppercase tracking-wide text-muted; }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded-lg bg-line/60;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full animate-shimmer;
+    background-image: linear-gradient(90deg, transparent, rgb(var(--raised) / 0.55), transparent);
+  }
+
+  /* Tabular figures keep table columns and axis ticks vertically aligned. */
+  .tnum { font-variant-numeric: tabular-nums; }
+}
+
+/* Recharts wiring: axes and grid stay recessive, never competing with the marks. */
+.recharts-cartesian-axis-tick text { fill: rgb(var(--muted)); font-size: 11px; }
+.recharts-cartesian-grid line { stroke: var(--grid); }
+.recharts-cartesian-axis line { stroke: var(--axis); }
+.recharts-surface { overflow: visible; }
