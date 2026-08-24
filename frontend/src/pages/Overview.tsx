@@ -7,6 +7,7 @@ import { ChartRenderer } from '../components/charts/ChartRenderer'
 import { FilterBar } from '../components/FilterBar'
 import { InsightCard } from '../components/InsightCard'
 import { Card, ScoreRing, SectionHeading } from '../components/Primitives'
+import { ExecutiveBriefing } from '../components/ExecutiveBriefing'
 import { formatBytes, formatDateTime } from '../lib/format'
 
 export function OverviewPage() {
@@ -16,6 +17,7 @@ export function OverviewPage() {
   } = useAnalysis()
   const [showAllKpis, setShowAllKpis] = useState(false)
   const [switching, setSwitching] = useState(false)
+  const [showBriefing, setShowBriefing] = useState(false)
 
   if (!view || !analysis) return null
 
@@ -150,9 +152,16 @@ export function OverviewPage() {
 
       <section className="flex flex-wrap gap-3">
         <Link to={`/app/${sessionId}/story`} className="btn-primary">Read the Data Story</Link>
+        <button type="button" className="btn-secondary" onClick={() => setShowBriefing(true)}>
+          Generate Executive Briefing
+        </button>
         <Link to={`/app/${sessionId}/ask`} className="btn-secondary">Ask your data a question</Link>
         <Link to={`/app/${sessionId}/reports`} className="btn-secondary">Generate a report</Link>
       </section>
+
+      {showBriefing && (
+        <ExecutiveBriefing sessionId={sessionId} onClose={() => setShowBriefing(false)} />
+      )}
     </div>
   )
 }
