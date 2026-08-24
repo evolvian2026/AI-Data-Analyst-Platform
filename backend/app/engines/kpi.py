@@ -274,8 +274,14 @@ def _derived_kpis(
     clicks = _find(measure_names, "clicks")
     impressions = _find(measure_names, "impressions")
     conversions = _find(measure_names, "conversions")
-    spend = next((c for c in measure_names if "spend" in c.lower() or "budget" in c.lower()), None)
     budget = _find(measure_names, "budget")
+    # A column that is the budget is not also "spend"; treating it as both would
+    # emit the same ratio twice under two different names.
+    spend = next(
+        (c for c in measure_names
+         if ("spend" in c.lower() or "budget" in c.lower()) and c != budget),
+        None,
+    )
 
     def ratio_kpi(key, label, numerator_col, denominator_col, numerator, denominator,
                   formula, as_percent, relevance, description, unit_semantic=""):

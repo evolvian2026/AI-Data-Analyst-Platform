@@ -86,8 +86,8 @@ export function AskPage() {
       <div className="space-y-5">
         {entries.map((entry, index) => (
           <div key={index} className="space-y-3">
-            <p className="ml-auto max-w-[80%] rounded-2xl rounded-br-sm bg-accent px-4 py-2.5
-                          text-sm text-accent-ink">
+            <p className="ml-auto w-fit max-w-[80%] rounded-2xl rounded-br-sm bg-accent px-4
+                          py-2.5 text-sm text-accent-ink">
               {entry.question}
             </p>
 

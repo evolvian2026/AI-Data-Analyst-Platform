@@ -339,14 +339,15 @@ def _answer_ranking(question, df, analysis, plan, currency, types) -> dict[str, 
         {
             "rank": position,
             plan.dimension: str(index),
-            plan.measure: safe_float(value),
-            "formatted": format_value(safe_float(value), semantic, currency),
+            plan.measure: format_value(safe_float(value), semantic, currency),
             "records": int(counts.get(index, 0)),
             "share_pct": round(float(value) / total * 100, 2) if plan.aggregation == "sum" and total else None,
         }
         for position, (index, value) in enumerate(ordered.items(), start=1)
     ]
-    leader = rows[0]
+    # The chart needs the raw numbers; the table shows the formatted ones.
+    values = [safe_float(value) for _, value in ordered.items()]
+    leader = {**rows[0], "formatted": rows[0][plan.measure]}
     direction = "lowest" if ascending else "highest"
     answer = (
         f"{leader[plan.dimension]} has the {direction} {label.lower()} {plan.measure} at "
@@ -356,8 +357,9 @@ def _answer_ranking(question, df, analysis, plan, currency, types) -> dict[str, 
     )
     if len(rows) > 1:
         answer += (
-            f" It is followed by {rows[1][plan.dimension]} ({rows[1]['formatted']})"
-            + (f" and {rows[2][plan.dimension]} ({rows[2]['formatted']})." if len(rows) > 2 else ".")
+            f" It is followed by {rows[1][plan.dimension]} ({rows[1][plan.measure]})"
+            + (f" and {rows[2][plan.dimension]} ({rows[2][plan.measure]})."
+               if len(rows) > 2 else ".")
         )
     return {
         "answer": answer,
@@ -369,7 +371,11 @@ def _answer_ranking(question, df, analysis, plan, currency, types) -> dict[str, 
         "chart": {
             "type": "horizontal_bar" if len(rows) > 5 else "bar",
             "title": f"{label} {plan.measure} by {plan.dimension}",
-            "data": [{"name": r[plan.dimension], "value": r[plan.measure]} for r in rows],
+            "data": [
+                {"name": row[plan.dimension], "value": value, "share": row["share_pct"],
+                 "records": row["records"]}
+                for row, value in zip(rows, values)
+            ],
             "x_key": "name",
             "series": [{"key": "value", "label": plan.measure}],
             "value_format": semantic,

@@ -1,0 +1,83 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-analyst}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_data_analyst}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analyst}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-analyst}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-ai_data_analyst}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_DIR: /app/data/uploads
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+      FILE_RETENTION_HOURS: ${FILE_RETENTION_HOURS:-72}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      AI_PROVIDER: ${AI_PROVIDER:-deterministic}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-sonnet-4-5}
+      AI_ALLOW_RAW_ROWS: ${AI_ALLOW_RAW_ROWS:-false}
+    volumes:
+      - uploads:/app/data
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # Removes uploaded workbooks past the retention window. The analysis results
+  # stay in the database, so reports remain readable after the file is gone.
+  cleanup:
+    build:
+      context: ./backend
+    environment:
+      SECRET_KEY: ${SECRET_KEY}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-analyst}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-ai_data_analyst}
+      STORAGE_DIR: /app/data/uploads
+      FILE_RETENTION_HOURS: ${FILE_RETENTION_HOURS:-72}
+    volumes:
+      - uploads:/app/data
+    depends_on:
+      db: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      'while true; do python -m app.tasks.cleanup; sleep 3600; done'
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  uploads:

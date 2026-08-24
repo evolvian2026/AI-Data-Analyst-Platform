@@ -19,6 +19,13 @@ export function DrilldownPanel({ sessionId, dimension, value, filters, onClose, 
   const [result, setResult] = useState<DrilldownResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Escape closes the panel: it overlays the page, so it needs a keyboard exit.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   useEffect(() => {
     let active = true
     setResult(null)
@@ -32,9 +39,11 @@ export function DrilldownPanel({ sessionId, dimension, value, filters, onClose, 
   }, [sessionId, dimension, value, filters])
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l
-                      border-line bg-surface shadow-lift"
-      role="dialog" aria-label={`Details for ${dimension} ${value}`}>
+    <>
+      <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} aria-hidden />
+      <aside className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l
+                        border-line bg-surface shadow-lift"
+        role="dialog" aria-modal="true" aria-label={`Details for ${dimension} ${value}`}>
       <header className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-muted">{dimension}</p>
@@ -66,8 +75,13 @@ export function DrilldownPanel({ sessionId, dimension, value, filters, onClose, 
                     <p className="text-xs text-muted">{metric.measure}</p>
                     <p className="text-lg font-semibold text-ink">{metric.formatted}</p>
                     <p className="tnum text-[11px] text-muted">
-                      avg {metric.formatted_average}
-                      {metric.share_pct !== null && ` · ${metric.share_pct.toFixed(1)}% of total`}
+                      {/* For an averaged measure the headline already is the
+                          average, so repeating it says nothing. */}
+                      {metric.aggregation === 'sum' && `avg ${metric.formatted_average}`}
+                      {metric.aggregation === 'sum' && metric.share_pct !== null && ' · '}
+                      {metric.share_pct !== null && `${metric.share_pct.toFixed(1)}% of total`}
+                      {metric.aggregation !== 'sum' && metric.share_pct === null
+                        && `${metric.records.toLocaleString()} records`}
                     </p>
                     {metric.vs_dataset_pct !== null && (
                       <p className={`text-[11px] font-medium ${
@@ -149,7 +163,8 @@ export function DrilldownPanel({ sessionId, dimension, value, filters, onClose, 
           </>
         )}
       </div>
-    </aside>
+      </aside>
+    </>
   )
 }
 

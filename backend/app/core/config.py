@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     # this many hours after the last time their session was touched.
     file_retention_hours: int = 72
 
+    # Background processing. Analysis runs in an in-process worker pool by
+    # default; set this to move the queue to Celery/Redis for horizontal scale.
+    redis_url: str = Field(default="")
+
     # --- Analytics limits --------------------------------------------------
     max_rows_analyzed: int = 1_000_000
     sample_rows_for_profiling: int = 50_000

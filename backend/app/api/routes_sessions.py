@@ -235,7 +235,17 @@ def drilldown(session_id: str, payload: DrilldownRequest, user: CurrentUser,
         )
 
     currency = profile.get("currency_symbol", "")
-    measures = [c for c in profile["columns"] if c["role"] == P.MEASURE]
+    # Lead with the measure the KPI engine ranked most relevant, or the one the
+    # caller asked for - not simply the leftmost numeric column.
+    ranked = analysis.get("ranked_measures") or []
+    measures = sorted(
+        (c for c in profile["columns"] if c["role"] == P.MEASURE),
+        key=lambda column: (
+            0 if column["name"] == payload.measure
+            else ranked.index(column["name"]) + 1 if column["name"] in ranked
+            else len(ranked) + 1
+        ),
+    )
     time_column = analysis.get("time_column")
     other_dimensions = [
         c["name"] for c in profile["columns"]
