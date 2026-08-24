@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Never ship the development database, uploaded workbooks or generated samples.
+data/
+app/samples/files/
+*.db
+*.sqlite3
+
+.env
+.env.*
+tests/
