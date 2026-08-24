@@ -28,8 +28,9 @@ _INJECTION_PATTERNS = [
     r"system\s*(prompt|message|instruction)",
     r"</?(system|assistant|user|human)>",
     r"\[/?(INST|SYS)\]",
-    r"reveal\s+(your|the)\s+(system|prompt|instructions?|configuration)",
-    r"print\s+(your|the)\s+(system\s+)?(prompt|instructions?)",
+    r"reveal\s+(your|the)?\s*(system|prompt|instructions?|configuration|secret)",
+    r"print\s+(your|the)?\s*(system\s+)?(prompt|instructions?)",
+    r"(show|output|repeat|display)\s+(your|the)?\s*(system\s+)?(prompt|instructions?)",
     r"act\s+as\s+(a|an|the)\s+",
     r"developer\s+mode",
     r"jailbreak",
@@ -74,6 +75,20 @@ def neutralize_text(value: Any, max_len: int = 300) -> str:
     if len(text) > max_len:
         text = text[:max_len] + "..."
     return text
+
+
+def sanitize_value(value: Any) -> Any:
+    """Neutralise a single cell without disturbing ordinary data.
+
+    Only cells that read like instructions are rewritten; everything else keeps
+    its exact original text so the analysis and the Explore Data view stay
+    faithful to the workbook.
+    """
+    if not isinstance(value, str):
+        return value
+    if looks_like_injection(value):
+        return neutralize_text(value, 300)
+    return strip_control_chars(value)
 
 
 def scan_for_injection(samples: dict[str, list[Any]]) -> list[dict[str, Any]]:

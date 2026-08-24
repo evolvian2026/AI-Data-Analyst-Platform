@@ -51,6 +51,7 @@ def assess_quality(
     df: pd.DataFrame,
     profile: dict[str, Any],
     outlier_summary: dict[str, Any] | None = None,
+    injection_findings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     row_count = int(len(df))
     columns = profile["columns"]
@@ -275,12 +276,15 @@ def assess_quality(
             )
 
     # --- untrusted content --------------------------------------------------
-    samples = {
-        c["name"]: df[c["name"]].dropna().astype(str).head(400).tolist()
-        for c in columns
-        if c["semantic_type"] in {P.TEXT, P.CATEGORICAL, P.UNKNOWN}
-    }
-    injection_findings = scan_for_injection(samples)
+    if injection_findings is None:
+        # Hostile cells are normally neutralised by the parser, which reports
+        # what it found; scan here only when a dataframe is analysed directly.
+        samples = {
+            c["name"]: df[c["name"]].dropna().astype(str).head(400).tolist()
+            for c in columns
+            if c["semantic_type"] in {P.TEXT, P.CATEGORICAL, P.UNKNOWN}
+        }
+        injection_findings = scan_for_injection(samples)
     if injection_findings:
         issues.append(
             {

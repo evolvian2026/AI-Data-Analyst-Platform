@@ -17,7 +17,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from app.engines.sanitize import neutralize_text, safe_filename
+from app.engines.formatting import is_text_column
+from app.engines.sanitize import (
+    looks_like_injection,
+    neutralize_text,
+    safe_filename,
+    sanitize_value,
+)
 
 MAX_HEADER_SCAN_ROWS = 12
 
@@ -133,15 +139,34 @@ def _drop_empty(df: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
     return df, empty_cols, empty_rows
 
 
-def _coerce_object_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalise object columns: trim strings, blank -> NaN."""
+def _coerce_text_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+    """Trim text, blank -> NaN, and neutralise instruction-like cells.
+
+    Neutralising here rather than at each output boundary means a hostile cell
+    cannot reach a chart label, an insight headline, an export or an AI prompt
+    by any route - there is one place to get right instead of a dozen.
+    """
+    findings: list[dict[str, Any]] = []
     for column in df.columns:
-        if df[column].dtype == object:
-            series = df[column]
-            stripped = series.map(lambda v: v.strip() if isinstance(v, str) else v)
-            stripped = stripped.map(lambda v: np.nan if isinstance(v, str) and v == "" else v)
-            df[column] = stripped
-    return df
+        if not is_text_column(df[column]):
+            continue
+        series = df[column]
+        stripped = series.map(lambda v: v.strip() if isinstance(v, str) else v)
+        stripped = stripped.map(lambda v: np.nan if isinstance(v, str) and v == "" else v)
+
+        suspicious = stripped.map(lambda v: looks_like_injection(v) if isinstance(v, str) else False)
+        flagged = int(suspicious.sum()) if len(suspicious) else 0
+        if flagged:
+            example = stripped[suspicious].iloc[0]
+            findings.append({
+                "column": str(column),
+                "occurrences": flagged,
+                "excerpt": neutralize_text(example, 160),
+                "reason": "Cell content resembles an instruction to an AI system.",
+            })
+            stripped = stripped.map(sanitize_value)
+        df[column] = stripped
+    return df, findings
 
 
 def read_workbook(
@@ -160,6 +185,7 @@ def read_workbook(
 
     frames: dict[str, pd.DataFrame] = {}
     infos: list[SheetInfo] = []
+    injection_findings: list[dict[str, Any]] = []
     total_cells = 0
 
     for sheet_name in excel.sheet_names:
@@ -194,12 +220,18 @@ def read_workbook(
             continue
 
         header_row = _detect_header_row(raw)
+        # Report the row number as it appears in the sheet, not after empty
+        # rows were dropped, so it matches what the user sees in Excel.
+        source_header_row = int(raw.index[header_row])
         headers, renamed, unnamed = _clean_headers(raw.iloc[header_row].tolist())
         body = raw.iloc[header_row + 1:].copy()
         body.columns = headers
         body = body.reset_index(drop=True)
         body, extra_cols, extra_rows = _drop_empty(body)
-        body = _coerce_object_columns(body)
+        body, sheet_findings = _coerce_text_columns(body)
+        for finding in sheet_findings:
+            finding["sheet"] = safe_name
+        injection_findings.extend(sheet_findings)
 
         if max_rows and len(body) > max_rows:
             body = body.head(max_rows)
@@ -210,7 +242,7 @@ def read_workbook(
             rows=int(body.shape[0]),
             columns=int(body.shape[1]),
             cells=int(body.shape[0] * body.shape[1]),
-            header_row=int(header_row),
+            header_row=source_header_row,
             empty_columns_removed=int(empty_cols + extra_cols),
             empty_rows_removed=int(empty_rows + extra_rows),
             duplicate_headers_renamed=renamed,
@@ -239,6 +271,7 @@ def read_workbook(
         "total_cells": int(total_cells),
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "sheets": [i.to_dict() for i in infos],
+        "injection_findings": injection_findings[:20],
     }
     return frames, infos, meta
 

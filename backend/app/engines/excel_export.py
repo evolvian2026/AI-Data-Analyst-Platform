@@ -12,6 +12,7 @@ from typing import Any
 
 import pandas as pd
 
+from app.engines.formatting import is_text_column
 from app.engines.sanitize import escape_for_spreadsheet, neutralize_text
 
 MAX_SHEET_NAME = 31
@@ -30,10 +31,11 @@ def _safe_sheet_name(name: str, used: set[str]) -> str:
 def _clean_frame(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame.copy()
     for column in result.columns:
-        if result[column].dtype == object:
+        if is_text_column(result[column]):
             result[column] = result[column].map(
-                lambda v: escape_for_spreadsheet(neutralize_text(v, 900)) if isinstance(v, str) else v
-            )
+                lambda v: escape_for_spreadsheet(neutralize_text(v, 900))
+                if isinstance(v, str) else v
+            ).astype(object)
     result.columns = [escape_for_spreadsheet(str(c))[:120] for c in result.columns]
     return result
 

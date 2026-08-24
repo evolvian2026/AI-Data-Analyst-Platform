@@ -7,6 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -94,8 +95,13 @@ async def validation_handler(request: Request, exc: RequestValidationError) -> J
     field = ".".join(str(p) for p in first.get("loc", [])[1:]) or "request"
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": f"{field}: {first.get('msg', 'is invalid')}",
-                 "errors": exc.errors()[:10]},
+        # Validation errors can carry exception objects in ``ctx``; encode them
+        # so the handler itself cannot fail while reporting a bad request.
+        content=jsonable_encoder(
+            {"detail": f"{field}: {first.get('msg', 'is invalid')}",
+             "errors": exc.errors()[:10]},
+            custom_encoder={Exception: str},
+        ),
     )
 
 

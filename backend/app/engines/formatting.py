@@ -10,6 +10,18 @@ import pandas as pd
 from app.engines import profiler as P
 
 
+def is_text_column(series: pd.Series) -> bool:
+    """True for columns holding text.
+
+    pandas infers a dedicated string dtype for text columns, so a bare
+    ``dtype == object`` check silently misses them - and anything that depends
+    on it (such as escaping exported values) would quietly stop running.
+    """
+    return bool(
+        pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)
+    ) and not pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_datetime64_any_dtype(series)
+
+
 def is_number(value: Any) -> bool:
     return isinstance(value, (int, float, np.integer, np.floating)) and not (
         isinstance(value, float) and (math.isnan(value) or math.isinf(value))

@@ -158,7 +158,9 @@ def analyze_dataframe(
 
     # --- quality ------------------------------------------------------------
     outliers = quality_engine.outlier_scan(df, profile)
-    quality = quality_engine.assess_quality(df, profile, outliers)
+    quality = quality_engine.assess_quality(
+        df, profile, outliers, injection_findings=meta.get("injection_findings"),
+    )
     progress.complete("quality_checked")
 
     # --- KPIs ---------------------------------------------------------------

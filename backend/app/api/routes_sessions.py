@@ -19,7 +19,7 @@ from app.engines import profiler as P
 from app.engines.anomaly import investigate_anomaly
 from app.engines.excel_export import build_workbook
 from app.engines.excel_parser import WorkbookError
-from app.engines.formatting import format_value, jsonify, safe_float
+from app.engines.formatting import format_value, is_text_column, jsonify, safe_float
 from app.engines.orchestrator import analyze_dataframe, apply_filters
 from app.engines.pdf_report import STYLE_PRESETS, generate_pdf
 from app.engines.sanitize import escape_for_spreadsheet, neutralize_text, safe_filename
@@ -589,7 +589,7 @@ def export_filtered_data(session_id: str, payload: ExcelExportRequest, user: Cur
     frame = _filtered_frame(session, payload.filters).head(payload.data_row_limit)
     safe = frame.copy()
     for column in safe.columns:
-        if safe[column].dtype == object:
+        if is_text_column(safe[column]):
             safe[column] = safe[column].map(escape_for_spreadsheet)
     csv = safe.to_csv(index=False)
     filename = safe_filename(f"{session.name}-data.csv")

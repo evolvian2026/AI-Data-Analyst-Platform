@@ -727,19 +727,24 @@ def _segment_insights(builder: InsightBuilder, segments: list[dict[str, Any]],
                     ),
                     interpretation=(
                         (
-                            f"Growth is concentrated in {fastest['group']}, which currently holds "
-                            f"{fastest['share_pct']:.1f}% of total {measure}."
+                            f"Growth appears concentrated in {fastest['group']}, which currently "
+                            f"holds {fastest['share_pct']:.1f}% of total {measure}."
                         ) if fastest.get("share_pct") is not None else (
-                            f"Growth is concentrated in {fastest['group']} across "
+                            f"Growth appears concentrated in {fastest['group']} across "
                             f"{fastest['count']:,} records."
                         )
+                    ) + (
+                        " Whether it continues depends on factors this dataset does not contain."
                     ),
                     recommendation=(
                         f"Identify what changed for {fastest['group']} and test whether the same "
                         f"approach transfers to other {dimension} values."
                     ),
                     confidence=MEDIUM,
-                    confidence_reason="Half-period comparison of directly aggregated values.",
+                    confidence_reason=(
+                        "Half-period comparison of directly aggregated values; the split point is "
+                        "mechanical, so the growth rate may not reflect a sustained trend."
+                    ),
                     evidence={
                         "metric": measure,
                         "value": fastest["value"],
