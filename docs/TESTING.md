@@ -13,6 +13,7 @@ suite means the pipeline genuinely works.
 
 ```bash
 cd backend
+pip install -r requirements-dev.txt  # runtime deps plus pytest and pypdf
 pytest                              # everything
 pytest tests/test_e2e.py -v         # the journey and the verification layer
 pytest tests/test_security.py -v    # one area

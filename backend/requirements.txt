@@ -1,26 +1,42 @@
-fastapi==0.115.*
-uvicorn[standard]==0.32.*
-python-multipart==0.0.*
-pydantic==2.*
-pydantic-settings==2.*
-SQLAlchemy==2.*
-psycopg2-binary==2.9.*
-alembic==1.*
-passlib[bcrypt]==1.7.*
-python-jose[cryptography]==3.*
-pandas>=2.2
-numpy>=1.26
-scipy>=1.11
-scikit-learn>=1.4
-openpyxl>=3.1
-xlrd>=2.0
-XlsxWriter>=3.2
-reportlab>=4.1
-httpx>=0.27
-python-dotenv>=1.0
-redis>=5.0
-celery>=5.4
-pytest>=8.0
-pytest-asyncio>=0.23
-email-validator>=2.0
-pypdf>=4.0
+# Runtime dependencies, pinned to the exact versions the test suite runs
+# against. A looser pin means the image installs software the code was never
+# validated with, so these move only when the suite has been re-run.
+#
+# Test-only dependencies live in requirements-dev.txt and are not installed
+# into the runtime image.
+
+# --- web ---------------------------------------------------------------------
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+pydantic==2.13.4
+pydantic-settings==2.15.0
+
+# --- persistence -------------------------------------------------------------
+SQLAlchemy==2.0.52
+# Required by the postgresql+psycopg2:// URL the deployment docs use. SQLite
+# needs no driver, which is why the default configuration has no dependency here.
+psycopg2-binary==2.9.11
+# Schema migrations once the first deployment has real data in it.
+alembic==1.17.1
+
+# --- security ----------------------------------------------------------------
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.5.0
+email-validator==2.3.0
+
+# --- analytics ---------------------------------------------------------------
+pandas==3.0.5
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.9.0
+
+# --- workbooks and reports ---------------------------------------------------
+openpyxl==3.1.5
+xlrd==2.0.2
+XlsxWriter==3.2.9
+reportlab==5.0.1
+
+# --- misc --------------------------------------------------------------------
+httpx==0.28.1
+python-dotenv==1.2.3

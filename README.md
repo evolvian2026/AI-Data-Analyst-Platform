@@ -84,7 +84,7 @@ Two terminals. **Backend:**
 ```bash
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt     # runtime deps plus the test runner
 python -m app.samples.generate          # build the sample workbooks
 uvicorn app.main:app --reload --port 8000
 ```
@@ -124,7 +124,7 @@ laptop to production. Copy [`.env.example`](.env.example) and fill it in.
 | `SAMPLE_ROWS_FOR_PROFILING` | `50000` | Profiling samples above this row count. |
 | `MAX_CHARTS` | `14` | Cap on generated charts. |
 | `MAX_PRIMARY_KPIS` | `8` | Cap on the headline KPI strip. |
-| `REDIS_URL` | *(empty)* | Set to move background analysis onto Celery/Redis. |
+| `REDIS_URL` | *(empty)* | Reserved for moving background analysis onto Celery. Nothing reads it today — analysis runs in an in-process worker pool. |
 | `AI_PROVIDER` | `deterministic` | `deterministic`, `anthropic` or `openai`. |
 | `AI_API_KEY` | *(empty)* | Required by the non-deterministic providers. |
 | `AI_MODEL` | `claude-sonnet-4-5` | Model identifier. |
@@ -183,6 +183,7 @@ figure against the calculated results before it is used.
 
 ```bash
 cd backend
+pip install -r requirements-dev.txt
 pytest                      # 191 tests
 pytest tests/test_e2e.py    # the journey, plus verification against pandas
 pytest tests/test_security.py -v
@@ -216,7 +217,10 @@ docker compose build
 ```
 
 Deployment, scaling, backup and hardening notes are in
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), including a precise statement of
+[what has and has not been verified](docs/DEPLOYMENT.md#what-has-and-has-not-been-verified)
+— the images themselves have not been built, because the development
+environment's egress policy blocks the base-image registry CDN.
 
 ---
 
@@ -243,7 +247,7 @@ backend/
     services/     session lifecycle and background analysis
     samples/      generated sample datasets
     tasks/        the retention cleanup job
-  tests/          160 tests
+  tests/          191 tests
 frontend/
   src/
     pages/        the eight workspace sections plus landing and sign-in

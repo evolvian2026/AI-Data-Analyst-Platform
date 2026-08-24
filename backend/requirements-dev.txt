@@ -1,0 +1,7 @@
+# Test and development dependencies. Deliberately not installed into the
+# runtime image - a production container has no reason to carry a test runner.
+-r requirements.txt
+
+pytest==9.1.1
+# Reads generated PDFs back so the report tests can assert on their contents.
+pypdf==6.16.2

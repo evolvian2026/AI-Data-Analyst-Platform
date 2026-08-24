@@ -33,15 +33,18 @@ docker compose ps
 curl -fsS http://localhost:8080/api/system/health
 ```
 
-Five services come up:
+Four services come up:
 
 | Service | Role |
 |---|---|
 | `db` | PostgreSQL with a named volume. |
-| `redis` | Available for a Celery queue; not required by the default in-process worker pool. |
 | `api` | FastAPI on Uvicorn with two workers, uploads on a named volume. |
 | `web` | The built frontend behind nginx, proxying `/api` to `api`. |
 | `cleanup` | Runs the retention sweep hourly. |
+
+There is deliberately no Redis service: analysis runs in an in-process worker
+pool and nothing connects to a queue today. Add Redis when you wire up Celery
+(see [Scaling](#scaling)) rather than running a container nothing talks to.
 
 ### Behind a reverse proxy
 
@@ -72,7 +75,7 @@ to outlast the longest analysis you expect.
 # Backend
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt          # add -dev to also run the tests
 export SECRET_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(48))')"
 export DATABASE_URL="postgresql+psycopg2://analyst:password@localhost:5432/ai_data_analyst"
 export STORAGE_DIR=/var/lib/ai-data-analyst/uploads
@@ -135,9 +138,10 @@ frame cache, so it scales horizontally as long as every replica sees the same
 **Analysis runs in a worker pool inside the API process.** That is the right
 default: it removes a moving part, and analysis is measured in seconds. When it
 stops being right — long-running analyses of very large workbooks starving
-request handling, or a need to scale workers separately — set `REDIS_URL` and
-move `analysis_service.schedule_analysis()` onto Celery. The service boundary is
-already in place; only the dispatch call changes.
+request handling, or a need to scale workers separately — add a Redis service,
+add `celery` to `requirements.txt`, set `REDIS_URL`, and move
+`analysis_service.schedule_analysis()` onto a Celery task. The service boundary
+is already in place; only the dispatch call changes.
 
 **Tuning knobs**
 
@@ -187,6 +191,40 @@ docker compose up -d
 Tables are created on startup, so a first deployment needs no migration step.
 Once you have real data, use Alembic (already in `requirements.txt`) for schema
 changes rather than relying on `create_all`.
+
+---
+
+## What has and has not been verified
+
+Being precise about this matters more than a green tick.
+
+**Verified**
+
+- The exact pinned dependency set in `requirements.txt` installs from scratch
+  and the full 191-test suite passes against it — so the image installs the
+  software the code was actually validated with, not a nearby version.
+- Both Dockerfile stages were replicated outside Docker: `pip wheel` builds all
+  57 wheels, and `pip install --no-index --find-links=/wheels` then imports the
+  application cleanly.
+- The image's own `CMD` (`uvicorn app.main:app --workers 2`) starts both workers
+  and serves `/api/system/health`.
+- `npm ci` succeeds against the committed lockfile, and `npm run build`
+  produces the bundle the frontend image copies into nginx.
+- `docker-compose.yml` parses and resolves.
+
+**Not verified**
+
+- **The images have never been built.** Pulling `python:3.11-slim` and
+  `node:22-alpine` requires `production.cloudfront.docker.com`, which the
+  development environment's egress policy blocks. Everything above is the
+  closest equivalent that could be run without it, but a first
+  `docker compose up --build` is still the remaining step.
+- **PostgreSQL has not been exercised.** Every test runs on SQLite. `psycopg2`
+  is installed and imports, and the URL form is standard, but no query has run
+  against Postgres.
+- **No AI provider has been called.** The `deterministic` default is fully
+  tested, and the verification layer is tested with a stub that returns
+  invented numbers, but no live model request has been made.
 
 ---
 
