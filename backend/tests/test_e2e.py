@@ -656,3 +656,79 @@ def test_an_unconfigured_ai_provider_falls_back_to_deterministic(monkeypatch):
 
     assert ai_provider.get_provider().name == "deterministic"
     assert ai_provider.narrate("x", {"a": 1}, "fallback")["text"] == "fallback"
+
+
+# ---------------------------------------------------------------------------
+# 7. Connection discipline
+#
+# SQLite tolerates a transaction held open across a long computation.
+# PostgreSQL does not: an idle-in-transaction connection blocks DDL, stops
+# autovacuum reclaiming dead tuples, and holds a pool slot. This is the
+# regression guard for that.
+# ---------------------------------------------------------------------------
+
+def test_analysis_holds_no_database_connection_while_it_runs(client, monkeypatch,
+                                                            source_workbook):
+    """The pipeline must not pin a connection for the duration of the analysis."""
+    from app.core.database import SessionLocal, engine
+    from app.models import AnalysisSession, User
+    from app.services import analysis_service
+
+    db = SessionLocal()
+    try:
+        user = User(email=f"pool+{time.time()}@example.com", hashed_password="x")
+        db.add(user)
+        db.flush()
+        session = analysis_service.create_session(
+            db, user.id, "pool.xlsx", source_workbook, name="pool test",
+        )
+        session_id = session.id
+    finally:
+        db.close()
+
+    checked_out_during_analysis: list[int] = []
+    original = analysis_service.analyze_workbook
+
+    def watching_analyze(*args, **kwargs):
+        # Sampled at the moment the expensive work begins.
+        checked_out_during_analysis.append(engine.pool.checkedout())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(analysis_service, "analyze_workbook", watching_analyze)
+    analysis_service.run_analysis(session_id)
+
+    assert checked_out_during_analysis, "the analysis never ran"
+    assert checked_out_during_analysis[0] == 0, (
+        "a database connection was held while the analysis ran: "
+        f"{checked_out_during_analysis[0]} checked out"
+    )
+
+    db = SessionLocal()
+    try:
+        stored = db.get(AnalysisSession, session_id)
+        assert stored.status == "completed"
+        assert stored.result["profile"]["row_count"] > 0
+    finally:
+        db.close()
+
+
+def test_a_session_deleted_mid_analysis_is_handled(client, source_workbook):
+    """Deleting a session while its analysis runs must not raise or hang."""
+    from app.core.database import SessionLocal
+    from app.models import AnalysisSession, User
+    from app.services import analysis_service
+
+    db = SessionLocal()
+    try:
+        user = User(email=f"gone+{time.time()}@example.com", hashed_password="x")
+        db.add(user)
+        db.flush()
+        session_id = analysis_service.create_session(
+            db, user.id, "gone.xlsx", source_workbook, name="deleted mid-run",
+        ).id
+        db.query(AnalysisSession).filter(AnalysisSession.id == session_id).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    analysis_service.run_analysis(session_id)  # must return quietly

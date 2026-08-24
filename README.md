@@ -184,7 +184,7 @@ figure against the calculated results before it is used.
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-pytest                      # 191 tests
+pytest                      # 193 tests, on SQLite or PostgreSQL
 pytest tests/test_e2e.py    # the journey, plus verification against pandas
 pytest tests/test_security.py -v
 ```
@@ -247,7 +247,7 @@ backend/
     services/     session lifecycle and background analysis
     samples/      generated sample datasets
     tasks/        the retention cleanup job
-  tests/          191 tests
+  tests/          193 tests
 frontend/
   src/
     pages/        the eight workspace sections plus landing and sign-in

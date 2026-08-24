@@ -71,35 +71,72 @@ def _set_progress(session_id: str, snapshot: dict[str, Any]) -> None:
 
 
 def run_analysis(session_id: str, sheet: str | None = None) -> None:
-    """Execute the pipeline for a session, persisting progress and the result."""
+    """Execute the pipeline for a session, persisting progress and the result.
+
+    The database session is deliberately released before the analysis starts.
+    Holding one across the CPU work would pin a connection *idle in transaction*
+    for the whole run, which on PostgreSQL blocks DDL (a migration during an
+    analysis simply hangs), stops autovacuum reclaiming dead tuples, and burns a
+    pool slot per concurrent analysis. SQLite hides all of this.
+    """
+    # --- 1. claim the job, taking a copy of everything the run needs ---------
     db = SessionLocal()
     try:
         session = db.get(AnalysisSession, session_id)
         if session is None:
             return
+        # Read before committing: commit expires the instance, so a later
+        # attribute access would issue a fresh SELECT and reopen a transaction.
+        storage_path = session.storage_path
+        original_filename = session.original_filename
+        existing_config = dict(session.config or {})
         session.status = "processing"
         session.error = ""
         db.commit()
+    except StaleDataError:
+        db.rollback()
+        return
+    finally:
+        db.close()
 
-        path = Path(session.storage_path)
+    # --- 2. the long work, holding no database session -----------------------
+    try:
+        path = Path(storage_path)
         if not path.exists():
-            session.status = "failed"
-            session.error = (
+            _fail(
+                session_id,
                 "The uploaded file is no longer available. Uploads are removed automatically "
-                f"after {settings.file_retention_hours} hours; please upload it again."
+                f"after {settings.file_retention_hours} hours; please upload it again.",
+                file_deleted=True,
             )
-            session.file_deleted = True
-            db.commit()
             return
 
         content = path.read_bytes()
         progress = Progress(callback=lambda snapshot: _set_progress(session_id, snapshot))
-        result = analyze_workbook(content, session.original_filename, sheet=sheet,
-                                  progress=progress)
+        result = analyze_workbook(content, original_filename, sheet=sheet, progress=progress)
+    except WorkbookError as exc:
+        _fail(session_id, str(exc))
+        return
+    except MemoryError:
+        _fail(session_id,
+              "The workbook is too large to analyse in the available memory. Try analysing a "
+              "single sheet, or reduce the number of rows.")
+        return
+    except Exception as exc:  # noqa: BLE001 - surfaced to the user as a failed session
+        logger.exception("analysis failed session=%s", session_id)
+        _fail(session_id, f"Analysis failed: {exc}")
+        return
 
+    # --- 3. persist the result in a second short transaction -----------------
+    db = SessionLocal()
+    try:
+        session = db.get(AnalysisSession, session_id)
+        if session is None:
+            logger.info("analysis discarded, session removed: %s", session_id)
+            return
         session.result = result
         session.workbook_meta = result.get("meta", {})
-        session.config = {**(session.config or {}), "sheet": sheet,
+        session.config = {**existing_config, "sheet": sheet,
                           "scope": result.get("scope", "workbook")}
         session.progress = result.get("progress", session.progress)
         session.status = "completed"
@@ -107,33 +144,35 @@ def run_analysis(session_id: str, sheet: str | None = None) -> None:
         db.commit()
         logger.info("analysis completed session=%s rows=%s", session_id,
                     result["profile"]["row_count"])
-    except WorkbookError as exc:
-        _fail(db, session_id, str(exc))
-    except MemoryError:
-        _fail(db, session_id,
-              "The workbook is too large to analyse in the available memory. Try analysing a "
-              "single sheet, or reduce the number of rows.")
     except StaleDataError:
-        # The session was deleted while its analysis was still running; there is
-        # nothing left to write the result to.
+        # The session was deleted while its analysis was still running.
         db.rollback()
         logger.info("analysis discarded, session removed: %s", session_id)
-    except Exception as exc:  # noqa: BLE001 - surfaced to the user as a failed session
-        logger.exception("analysis failed session=%s", session_id)
-        _fail(db, session_id, f"Analysis failed: {exc}")
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("could not persist analysis session=%s", session_id)
+        _fail(session_id, "The analysis finished but its result could not be saved.")
     finally:
         db.close()
 
 
-def _fail(db: Session, session_id: str, message: str) -> None:
+def _fail(session_id: str, message: str, file_deleted: bool = False) -> None:
+    """Record a failure in its own short-lived session."""
+    db = SessionLocal()
     try:
         session = db.get(AnalysisSession, session_id)
-        if session:
-            session.status = "failed"
-            session.error = message[:2000]
-            db.commit()
-    except Exception:  # noqa: BLE001
+        if session is None:
+            return
+        session.status = "failed"
+        session.error = message[:2000]
+        if file_deleted:
+            session.file_deleted = True
+        db.commit()
+    except Exception:  # noqa: BLE001 - a failure to record a failure is not fatal
         db.rollback()
+        logger.exception("could not record failure for session=%s", session_id)
+    finally:
+        db.close()
 
 
 def schedule_analysis(session_id: str, sheet: str | None = None) -> None:

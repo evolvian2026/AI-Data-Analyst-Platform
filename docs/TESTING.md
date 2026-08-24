@@ -4,9 +4,13 @@ Three layers:
 
 | Layer | What it proves | How to run |
 |---|---|---|
-| **191 backend tests** | Every engine behaves, the API contract holds, and — in `test_e2e.py` — every reported figure matches an independent pandas recomputation of the source workbook. | `cd backend && pytest` |
+| **193 backend tests** | Every engine behaves, the API contract holds, and — in `test_e2e.py` — every reported figure matches an independent pandas recomputation of the source workbook. | `cd backend && pytest` |
 | **84 browser checks** | The real production bundle works for a real user: routing, rendering, charts, downloads, theme, responsive layout, isolation. | `cd frontend && npm run e2e` |
 | **Type checking** | The frontend compiles under strict TypeScript. | `cd frontend && npm run lint` |
+
+The backend suite passes on both SQLite (the default) and PostgreSQL. Run it
+against Postgres with `DATABASE_URL=postgresql+psycopg2://... pytest` — worth
+doing before a release, because the two databases do not fail in the same way.
 
 They run against real generated workbooks — no mocked dataframes — so a passing
 suite means the pipeline genuinely works.
@@ -44,7 +48,8 @@ npm run e2e                         # 84 checks against the built bundle
 | `test_reports.py` | 14 | PDF generation for every style, page-count ranges, cover customisation, page numbers, table of contents, section selection, chart rendering, Excel sheet contents, formula-injection escaping. |
 | `test_security.py` | 35 | Prompt injection detection and neutralisation, data-block isolation, injection through workbook cells, question safety, formula injection, path traversal, authentication, account enumeration, cross-user isolation, malicious and oversized uploads, AI verification, security headers. |
 | `test_api.py` | 24 | Registration and login, pipeline progress, the analysis payload, chart rationale, Ask Your Data, filters, drill-down, anomaly investigation, audience adaptation, data exploration, downloads, sharing, re-analysis, samples, deletion, retention. |
-| `test_e2e.py` | 31 | The complete journey through the API in the order a user performs it; **independent verification of every reported figure against pandas**; all five samples through the full journey including all three report styles; failure paths; and the deployment settings that only break once deployed. |
+| `test_e2e.py` | 33 | The complete journey through the API in the order a user performs it; **independent verification of every reported figure against pandas**; all five samples through the full journey including all three report styles; failure paths; the deployment settings that only break once deployed, and the connection
+discipline that only PostgreSQL enforces. |
 
 ---
 
@@ -220,6 +225,16 @@ And from the end-to-end layers:
   to JSON-decode a `List[str]` from the environment before any validator runs,
   so the documented deployment configuration could not boot. Found by actually
   starting the server the way the docs say to.
+* **Every in-flight analysis pinned a database connection open.** After the
+  worker committed `status = "processing"`, SQLAlchemy expired the instance, so
+  the next attribute access re-issued a SELECT and opened a transaction that
+  stayed open for the entire analysis. On PostgreSQL that blocks DDL, stops
+  autovacuum reclaiming dead tuples and holds a pool slot per concurrent run —
+  a migration during an analysis simply hangs. SQLite hid it completely; the
+  bug only appeared when the suite was pointed at a real Postgres server, where
+  it deadlocked the test teardown. The worker now holds no session across the
+  computation, and a regression test asserts the pool is empty at the moment
+  the analysis begins.
 * **SVG chart export silently dropped every CSS-driven colour.** Computed styles
   were read from a detached clone, where `getComputedStyle` returns nothing, so
   the inlining loop wrote no styles at all. Axis labels fell back to black —

@@ -211,6 +211,9 @@ Being precise about this matters more than a green tick.
 - `npm ci` succeeds against the committed lockfile, and `npm run build`
   produces the bundle the frontend image copies into nginx.
 - `docker-compose.yml` parses and resolves.
+- **The full suite passes against PostgreSQL 16** as well as SQLite (193 tests
+  on each), with the schema created by `init_db()` and no connections left
+  idle in transaction afterwards.
 
 **Not verified**
 
@@ -219,9 +222,6 @@ Being precise about this matters more than a green tick.
   development environment's egress policy blocks. Everything above is the
   closest equivalent that could be run without it, but a first
   `docker compose up --build` is still the remaining step.
-- **PostgreSQL has not been exercised.** Every test runs on SQLite. `psycopg2`
-  is installed and imports, and the URL form is standard, but no query has run
-  against Postgres.
 - **No AI provider has been called.** The `deterministic` default is fully
   tested, and the verification layer is tested with a stub that returns
   invented numbers, but no live model request has been made.
@@ -235,6 +235,7 @@ Being precise about this matters more than a green tick.
 | Every user signed out after a restart | `SECRET_KEY` not set, so a new key was generated. |
 | Uploads fail at a certain size | The reverse proxy's `client_max_body_size` is below `MAX_UPLOAD_MB`. |
 | Analysis stuck at `processing` | Check `docker compose logs api` — a parse failure sets `status: failed` with an explanation, but an OOM kill will not. |
+| A migration hangs | Something is holding an open transaction. Check `pg_stat_activity` for `idle in transaction`; the analysis worker deliberately holds no connection while it runs, so a hang points at another client. |
 | `410 Gone` when exploring rows | The upload passed its retention window. The analysis survives; re-upload to explore rows. |
 | Browser blocked by CORS | `CORS_ORIGINS` does not list the origin the browser is using. |
 | Report generation times out | Raise the proxy read timeout; a detailed report on a large dataset takes a few seconds. |

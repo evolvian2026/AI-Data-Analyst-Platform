@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -78,6 +79,29 @@ def messy_frame() -> pd.DataFrame:
     })
 
 
+def drain_background_analysis(timeout: float = 60.0) -> None:
+    """Wait for in-flight analyses started by the test that just finished."""
+    from app.core.database import SessionLocal
+    from app.models import AnalysisSession
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        db = SessionLocal()
+        try:
+            pending = (
+                db.query(AnalysisSession)
+                .filter(AnalysisSession.status.in_(["pending", "processing"]))
+                .count()
+            )
+        except Exception:  # noqa: BLE001 - the schema may already be gone
+            return
+        finally:
+            db.close()
+        if pending == 0:
+            return
+        time.sleep(0.2)
+
+
 @pytest.fixture
 def client():
     """API client bound to a fresh database."""
@@ -90,6 +114,11 @@ def client():
     Base.metadata.create_all(bind=engine)
     with TestClient(app) as test_client:
         yield test_client
+
+    # Background analyses outlive the request that started them. Let them finish
+    # before the next test drops the schema, or the DDL blocks behind their
+    # transactions - which is a hang on PostgreSQL, not a flake.
+    drain_background_analysis()
 
 
 @pytest.fixture
