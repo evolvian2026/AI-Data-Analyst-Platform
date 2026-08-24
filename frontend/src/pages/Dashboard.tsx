@@ -37,7 +37,7 @@ export function DashboardPage() {
         <div className="grid gap-4 lg:grid-cols-2">
           {view.charts.map((chart, index) => (
             <div key={chart.id}
-              className={index === 0 && chart.type !== 'donut' ? 'lg:col-span-2' : ''}>
+              className={`min-w-0 ${index === 0 && chart.type !== 'donut' ? 'lg:col-span-2' : ''}`}>
               <ChartRenderer chart={chart} height={index === 0 ? 300 : 250}
                 onDrilldown={(dimension, value) => setDrilldown({ dimension, value })} />
             </div>

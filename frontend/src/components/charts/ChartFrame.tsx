@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import type { Chart } from '../../lib/types'
 import { clsx } from '../../lib/format'
 
@@ -18,11 +18,46 @@ interface Props {
 export function ChartFrame({ chart, children, table, compact = false }: Props) {
   const [showTable, setShowTable] = useState(false)
   const [showWhy, setShowWhy] = useState(false)
+  const plot = useRef<HTMLDivElement>(null)
+
+  /**
+   * Export the chart as a standalone SVG. The rendered chart inherits its
+   * colours from CSS custom properties, so the computed values are inlined -
+   * otherwise the exported file would be a set of black shapes.
+   */
+  const exportChart = useCallback(() => {
+    const source = plot.current?.querySelector('svg')
+    if (!source) return
+    const clone = source.cloneNode(true) as SVGSVGElement
+    const root = getComputedStyle(document.documentElement)
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    clone.style.background = `rgb(${root.getPropertyValue('--surface').trim()})`
+    clone.querySelectorAll<SVGElement>('*').forEach((node) => {
+      const computed = getComputedStyle(node)
+      for (const property of ['fill', 'stroke', 'stroke-width', 'font-size', 'font-family']) {
+        const value = computed.getPropertyValue(property)
+        if (value && value !== 'none') node.style.setProperty(property, value)
+      }
+    })
+    const blob = new Blob(
+      ['<?xml version="1.0" encoding="UTF-8"?>\n', new XMLSerializer().serializeToString(clone)],
+      { type: 'image/svg+xml' },
+    )
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${chart.title.replace(/[^\w -]+/g, '')}.svg`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  }, [chart.title])
 
   return (
-    <figure className="card flex h-full flex-col overflow-hidden">
-      <figcaption className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
-        <div className="min-w-0">
+    <figure className="card flex h-full min-w-0 flex-col overflow-hidden">
+      <figcaption className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1
+                             border-b border-line px-4 py-3">
+        <div className="min-w-[55%] flex-1">
           <h3 className="truncate text-sm font-semibold text-ink">{chart.title}</h3>
           <p className="mt-0.5 truncate text-xs text-muted" title={chart.question}>
             {chart.question}
@@ -45,6 +80,14 @@ export function ChartFrame({ chart, children, table, compact = false }: Props) {
           >
             {showTable ? 'Chart' : 'Table'}
           </button>
+          <button
+            type="button"
+            onClick={exportChart}
+            className="btn-ghost px-2 py-1 text-xs"
+            title="Download this chart as an SVG"
+          >
+            Export
+          </button>
         </div>
       </figcaption>
 
@@ -61,7 +104,7 @@ export function ChartFrame({ chart, children, table, compact = false }: Props) {
         </div>
       )}
 
-      <div className={clsx('min-h-0 flex-1 px-2 pt-3', compact ? 'pb-1' : 'pb-2')}>
+      <div ref={plot} className={clsx('min-h-0 flex-1 px-2 pt-3', compact ? 'pb-1' : 'pb-2')}>
         {showTable ? (
           <div className="max-h-[320px] overflow-auto px-2">{table}</div>
         ) : (

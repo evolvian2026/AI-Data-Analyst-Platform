@@ -116,7 +116,7 @@ export function OverviewPage() {
             </button>
           }
         />
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {kpis.map((kpi) => <KpiCard key={kpi.key} kpi={kpi} />)}
         </div>
       </section>
