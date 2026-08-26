@@ -5,7 +5,7 @@ import { api, ApiError } from '../lib/api'
 import { ChartRenderer } from '../components/charts/ChartRenderer'
 import { FilterBar } from '../components/FilterBar'
 import { ConfidenceBadge, Card, SectionHeading } from '../components/Primitives'
-import type { AskAnswer } from '../lib/types'
+import type { AskAnswer, AskContext } from '../lib/types'
 
 interface Entry {
   question: string
@@ -21,6 +21,10 @@ export function AskPage() {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const bottom = useRef<HTMLDivElement>(null)
+  // The conversation lives here rather than on the server: the last answer's
+  // context is echoed back with the next question, so a follow-up such as
+  // "and by product?" resolves without the API holding any per-user state.
+  const context = useRef<AskContext | null>(null)
 
   useEffect(() => {
     api.askSuggestions(sessionId)
@@ -35,7 +39,8 @@ export function AskPage() {
     setEntries((current) => [...current, { question: trimmed, answer: null }])
     setQuestion('')
     try {
-      const answer = await api.ask(sessionId, trimmed, filters)
+      const answer = await api.ask(sessionId, trimmed, filters, context.current)
+      context.current = answer.context
       setEntries((current) => current.map((entry, index) =>
         index === current.length - 1 ? { ...entry, answer } : entry))
     } catch (caught) {
@@ -66,7 +71,13 @@ export function AskPage() {
 
       <SectionHeading
         title="Ask your data"
-        description="Questions are mapped to a validated calculation - no code is generated or executed, and every answer shows the maths behind it."
+        description="Questions are mapped to a validated calculation - no code is generated or executed, and every answer shows the maths behind it. Follow-ups work: ask one question, then just say what to change."
+        action={entries.length > 0 ? (
+          <button type="button" className="btn-ghost text-xs"
+            onClick={() => { context.current = null; setEntries([]) }}>
+            Start a new thread
+          </button>
+        ) : undefined}
       />
 
       {entries.length === 0 && (
@@ -113,7 +124,10 @@ export function AskPage() {
         void submit(question)
       }}>
         <input value={question} onChange={(event) => setQuestion(event.target.value)}
-          placeholder="Ask a question about this dataset…" aria-label="Your question"
+          placeholder={entries.length === 0
+            ? 'Ask a question about this dataset…'
+            : 'Ask a follow-up — "and by product?", "what about North?"'}
+          aria-label="Your question"
           className="input shadow-lift" disabled={busy} />
         <button type="submit" className="btn-primary shrink-0" disabled={busy || !question.trim()}>
           {busy ? 'Thinking…' : 'Ask'}
@@ -127,6 +141,14 @@ function AnswerBlock({ answer }: { answer: AskAnswer }) {
   return (
     <div className="max-w-[92%] space-y-3">
       <Card>
+        {/* Stated before the answer, because on a follow-up part of the meaning
+            came from the previous question rather than from this one. */}
+        <p className="mb-2 text-xs text-muted">
+          {answer.follow_up && (
+            <span className="chip mr-2 border-accent/40 text-accent">follow-up</span>
+          )}
+          {answer.interpretation}
+        </p>
         <p className="text-sm leading-relaxed text-ink">{answer.answer}</p>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">

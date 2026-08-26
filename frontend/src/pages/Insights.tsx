@@ -25,7 +25,7 @@ const TYPES = [
 export function InsightsPage() {
   const {
     sessionId, view, analysis, filters, setFilters, filtering, bookmarks, notes,
-    toggleBookmark, saveNote,
+    toggleBookmark, saveNote, rateInsight,
   } = useAnalysis()
   const navigate = useNavigate()
   const [type, setType] = useState('all')
@@ -58,6 +58,13 @@ export function InsightsPage() {
     <div className="space-y-6">
       <FilterBar definitions={analysis.filters} active={filters} onChange={setFilters}
         busy={filtering} summary={view.filter_summary ?? null} />
+
+      {analysis.feedback?.active && (
+        <p className="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-subtle">
+          <span className="font-medium text-ink">Ranking adapted to you. </span>
+          {analysis.feedback.statement}
+        </p>
+      )}
 
       <SectionHeading
         title="Insights"
@@ -102,6 +109,7 @@ export function InsightsPage() {
               <InsightCard key={insight.id} insight={insight} rank={insight.rank}
                 bookmarked={bookmarks.includes(insight.id)} note={notes[insight.id]}
                 onBookmark={toggleBookmark} onNote={saveNote}
+                onRate={view.filtered ? undefined : (id, vote) => { void rateInsight(id, vote) }}
                 onAsk={(question) =>
                   navigate(`/app/${sessionId}/ask?q=${encodeURIComponent(question)}`)}
                 onInvestigate={async (anomalyId) => {

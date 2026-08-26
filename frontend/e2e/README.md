@@ -7,6 +7,10 @@ tests cannot reach.
 
 ## Running it
 
+The journey loads two samples: *Retail Sales Performance* for most of it, and
+*SaaS Subscriptions* — the only two-sheet one — for the cleaning and join
+sections. Both come from the API, so nothing needs seeding by hand.
+
 ```bash
 # 1. Start the API (any database; a throwaway SQLite file is fine)
 cd backend
@@ -36,11 +40,16 @@ Exits non-zero if any check fails or the browser logs an error.
 | `--shots <dir>` | Save a full-page screenshot at each stage. |
 
 `CHROMIUM_PATH` overrides the browser binary when Playwright's own download is
-unavailable.
+unavailable — for example a pre-installed Chromium whose build number does not
+match the one the installed Playwright expects:
+
+```bash
+CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome npm run e2e
+```
 
 ## What it checks
 
-84 assertions across the whole journey:
+127 assertions across the whole journey:
 
 | Section | Checks |
 |---|---|
@@ -52,8 +61,13 @@ unavailable.
 | Data Story | Opens on the summary, Next/Previous navigation, **audience changes depth but never the finding**, document view. |
 | Dashboard | Charts render and draw marks, each states its question, "Why this chart", table view, drill-down opens and breaks the value down, **filters recalculate the KPIs** and clearing restores them. |
 | Insights | All findings listed, filtering by type, bookmarking, anomaly investigation, **refusal to claim causation**. |
-| Ask Your Data | Five real questions answered, calculation and confidence shown, **a prompt-injection question is treated as data**. |
-| Data Quality | Score with reasoning, the five components, column classification, impact statements. |
+| Ask Your Data | Five real questions answered, calculation and confidence shown, **a prompt-injection question is treated as data**, every answer states how it was read, and a follow-up (`"and by Product?"`) inherits the measure it did not name and says so. |
+| Data Quality | Score with reasoning, the five components, column classification, impact statements, and that cleaning is offered as a proposal with the file declared untouched. |
+| Projection | The page states that projections are not measurements; every measure is either projected — with its method, interval and assumptions — or refused with a reason. |
+| Column classification | The inferred reading of every column, **a text column never offered as a measure**, a numeric one offered, the blocked reason shown, and a real correction applied that re-runs the analysis. |
+| Insight feedback | A rating is recorded and explained, the bound is stated, and rating **never removes or rewrites** the finding. |
+| What Changed | With one analysis it says so rather than inventing a comparison; with two it offers the earlier one, compares metrics before and after, states its matching method, and reports no movement for identical uploads. |
+| Cleaning and joins | On the two-sheet sample: a fix proposed with before/after values and its risk, **nothing accepted until accepted**, preview changing nothing, applying declared on every page and audited; then a relationship detected, a join previewed with match counts, cardinality and the repeated-column warning, and the joined analysis produced as its own session. |
 | Explore Data | Rows listed, paging, search. |
 | Reports | Three styles offered, PDF and Excel download and are real files, share link created. |
 | Chart export | SVG exports with mark colours **and CSS-driven label colours** inlined. |
@@ -70,10 +84,16 @@ Several assert a *negative* — that the product refuses to do something:
 * Anomaly investigation must contain "association" or "not causation".
 * A prompt-injection question must not surface the system prompt.
 * A second account must get "not found", not an empty dashboard.
+* A text column must not be offered as a measure, however the user asks.
+* No cleaning proposal may be checked until someone checks it, and previewing
+  must change nothing.
+* Rating a finding must leave the finding itself untouched.
+* With only one analysis, "What Changed" must say so rather than invent a
+  comparison.
 
 ## Known-good baseline
 
-A clean run is `Checks passed: 84 / Checks failed: 0 / Console errors: 0`.
+A clean run is `Checks passed: 127 / Checks failed: 0 / Console errors: 0`.
 The console-error gate is deliberately part of the pass condition; the only
 suppressed case is the 404 raised by the isolation probe, which proves
 isolation works.

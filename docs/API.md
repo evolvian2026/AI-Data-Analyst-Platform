@@ -33,6 +33,7 @@ Client-visible limits and capabilities — never secrets.
   "app_name": "AI Data Analyst",
   "max_upload_mb": 100,
   "file_retention_hours": 72,
+  "result_retention_days": 0,
   "accepted_formats": [".xlsx", ".xls"],
   "pipeline_stages": [{ "key": "uploaded", "label": "File uploaded" }, "..."],
   "audiences": { "executive": { "label": "Executive", "depth": "minimal", "description": "..." } },
@@ -101,7 +102,9 @@ the background. Poll `/sessions/{id}/status`.
 
 ### `GET /sessions`
 
-Your analysis sessions, newest first.
+Your analysis sessions, newest first. Each carries `result_expires_at`: when the
+retention policy will delete the analysis, or `null` when results are kept
+indefinitely (`RESULT_RETENTION_DAYS=0`, the default).
 
 ### `GET /sessions/{id}` · `GET /sessions/{id}/status`
 
@@ -146,6 +149,17 @@ The complete analysis. `409` while the session is still processing.
 | `filters` | Filter definitions generated from the dataset's own dimensions. |
 | `next_questions` | Follow-up questions built from the available columns. |
 | `relationships` | Shared keys detected between sheets. |
+| `forecasts` | A projection per leading measure, or `available: false` with the reason it was withheld. |
+| `join` | How this dataset was built, when it is the result of a cross-sheet join. `null` otherwise. |
+| `cleaning` | Audit of the accepted cleaning recipe applied to this analysis. `null` when none is applied. |
+| `cleaning_proposals` | Corrections this dataset would benefit from. Proposals only — nothing is applied. |
+| `column_options` | Per column, the classifications its values can actually support. |
+| `combined_sheets` | The sheets whose rows this analysis actually covers. |
+| `feedback` | This user's ratings and the bound on how far they move the ranking. |
+
+Insights served here are ordered by their statistical priority score plus this
+user's bounded feedback adjustment; each carries `priority.feedback_adjustment`,
+`priority.feedback_reason` and `your_vote` when a rating applies.
 
 ### `POST /sessions/{id}/analyze` → `202`
 
@@ -200,8 +214,12 @@ analyses this dataset can actually support. `404` if no record matches.
 ### `POST /sessions/{id}/ask`
 
 ```json
-{ "question": "Which region is growing fastest?", "filters": [] }
+{ "question": "Which region is growing fastest?", "filters": [], "context": null }
 ```
+
+`context` is the previous answer's own `context` block, echoed back so a
+follow-up resolves. The conversation lives in the client; the API holds no
+per-user state.
 
 ```json
 {
@@ -216,12 +234,35 @@ analyses this dataset can actually support. `404` if no record matches.
   "records_used": 4613,
   "caveat": "The split point between halves is mechanical, not tied to a known event.",
   "plan": { "intent": "growth", "measure": "Revenue", "dimension": "Region" },
-  "applied_filter": null
+  "applied_filter": null,
+  "interpretation": "Understood as: growth in Revenue.",
+  "follow_up": false,
+  "inherited": [],
+  "context": { "intent": "growth", "measure": "Revenue", "dimension": "Region",
+               "aggregation": "sum", "limit": 10, "filter": null,
+               "question": "Which region is growing fastest?" }
 }
 ```
 
 `supported: false` means the dataset cannot answer that question; `suggestions`
 then offers questions it can.
+
+Send that `context` back with the next question and a fragment resolves against
+it:
+
+```json
+{ "question": "and by Product?", "context": { "...the block above..." } }
+```
+
+```json
+{ "follow_up": true,
+  "inherited": ["intent", "measure"],
+  "interpretation": "Understood as: the highest Product by Revenue (carried over from your previous question: intent, measure)." }
+```
+
+Inheritance only fills slots the new question left empty — anything it names
+explicitly always wins — and `interpretation` states the result on every answer,
+follow-up or not, so a wrong assumption is visible rather than silent.
 
 ### `GET /sessions/{id}/ask/suggestions` · `GET /sessions/{id}/ask/history`
 
@@ -255,6 +296,143 @@ opportunities, recommended actions, key numbers and the data quality headline.
 
 A page of rows with column classifications and the total count. Paging, sorting
 and search all run server side. `410` once the upload has been swept.
+
+---
+
+## Column classification
+
+### `GET /sessions/{id}/columns`
+
+Every column's inferred type, role and aggregation, the values behind that
+inference, and — in `options` — only the classifications the data can actually
+support. A column holding no numerically coercible values does not list
+`measure`, and `options.blocked` says why.
+
+### `POST /sessions/{id}/columns` → `202`
+
+```json
+{ "overrides": { "Units": { "aggregation": "mean" },
+                 "Store Code": { "role": "dimension" } },
+  "reanalyze": true }
+```
+
+Re-runs the whole pipeline with those columns read your way. `422` with a
+reason when the data cannot support a correction; `{"overrides": {}}` clears
+them and restores the inferred classification. `410` if the upload has passed
+its retention window.
+
+---
+
+## Data quality fixes
+
+Nothing here is ever applied automatically, and the uploaded workbook is never
+modified. An accepted fix is stored as a recipe replayed onto a copy of the data
+every time it is read.
+
+### `GET /sessions/{id}/quality/fixes`
+
+Proposals with the exact cell count, real before/after values, an honest risk
+statement, a `data_loss` flag, and `accepted` for each. `applied` lists the
+current recipe and `audit` what it actually changed.
+
+### `POST /sessions/{id}/quality/fixes/preview`
+
+```json
+{ "fixes": [ { "id": "fix_std_dq_inconsistent_1", "type": "standardize_categories",
+               "column": "Region", "params": { "mapping": { "north": "North" } } } ] }
+```
+
+Reports what those fixes *would* change, against uncleaned data, without
+accepting them.
+
+### `POST /sessions/{id}/quality/fixes` → `202`
+
+Same body plus `"reanalyze": true`. Accepts the fixes and re-runs the analysis.
+Send `{"fixes": []}` to remove them, which restores the original analysis
+exactly. Fix types: `standardize_categories`, `parse_numeric`, `parse_dates`,
+`drop_duplicate_rows`.
+
+---
+
+## Cross-sheet joins
+
+### `GET /sessions/{id}/joins`
+
+Detected relationships between the workbook's sheets, the analysable sheet
+names, and the join this session was built from, if any.
+
+### `POST /sessions/{id}/joins/preview`
+
+```json
+{ "left": "Orders", "right": "Customers", "key": "Customer ID", "how": "inner" }
+```
+
+Reports the cost before anything runs: cardinality, matched and unmatched rows
+on each side, expected result size, overlapping column names, the lookup columns
+that would repeat, and `safe`. An unsafe join is *described*, not refused —
+showing the danger is the point of a preview.
+
+### `POST /sessions/{id}/joins` → `202`
+
+Same body, plus an optional `name`. Creates a **new** analysis session for the
+joined table, leaving this one untouched. `422` when the join would multiply
+rows (a many-to-many fan-out) or exceed the row cap, because every total
+calculated from such a result would be overstated.
+
+---
+
+## Comparison
+
+### `GET /sessions/{id}/comparable`
+
+Earlier analyses of yours that describe the same kind of dataset, scored by how
+much of their column definition they share. Comparability is structural — the
+same columns playing the same analytical roles — not a matching filename.
+
+### `GET /sessions/{id}/compare/{previous_id}`
+
+What changed: `headline`, `schema`, `coverage`, `quality`, `kpis`, `segments`,
+`concentration`, `trends`, `insights` and `caveats`. Metrics are matched by
+calculation key, segments by `(dimension, measure)` and findings by what they
+are about rather than by their wording, so anything present in only one analysis
+is reported as added or removed rather than compared. A metric whose aggregation
+changed is marked `incomparable`; a non-positive baseline yields a null
+`change_pct` with a note, never a percentage.
+
+---
+
+## Insight feedback
+
+### `POST /sessions/{id}/feedback`
+
+```json
+{ "insight_id": "ins_003", "vote": "useful" }
+```
+
+`vote` is `useful`, `not_useful` or `clear`. Returns the re-ordered insights and
+the current feedback state. Ratings move ranking only — never a value, a
+confidence level, or whether a finding reaches a report — bounded to 8 points on
+a 100-point priority score.
+
+### `GET /sessions/{id}/feedback`
+
+Your ratings, the adjustment they produce by subject and by finding type, and a
+plain statement of the bound.
+
+---
+
+## Projection
+
+### `GET /sessions/{id}/forecast`
+
+Projections for the leading measures, split into `available` and `unavailable`.
+Each available projection carries its method, horizon, `interval_pct` prediction
+interval, the basis it was fitted on, its caveats and a disclaimer. Each
+unavailable one carries the reason it was withheld — a series too short, too
+volatile, or one whose interval would carry no usable information.
+
+Projected values are model output. They never appear in a KPI, a total or a
+share, and every projected point is flagged `projected: true`.
 
 ---
 

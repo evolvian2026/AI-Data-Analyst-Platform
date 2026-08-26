@@ -506,7 +506,9 @@ def test_record_counts_never_exceed_the_dataset(client, auth_headers, journey, s
 # 4. Every sample dataset survives the full journey
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("sample", ["sales", "students", "employees", "marketing", "finance"])
+@pytest.mark.parametrize(
+    "sample", ["sales", "students", "employees", "marketing", "subscriptions", "finance"],
+)
 def test_every_sample_completes_the_full_journey(client, auth_headers, sample):
     created = client.post(f"/api/samples/{sample}/load", headers=auth_headers)
     assert created.status_code == 202
@@ -537,6 +539,54 @@ def test_every_sample_completes_the_full_journey(client, auth_headers, sample):
         answer = client.post(f"/api/sessions/{session_id}/ask", headers=auth_headers,
                              json={"question": question}).json()
         assert answer["answer"], f"{sample}: no answer to '{question}'"
+
+    # Every sample must also produce a projection or say why it cannot, and
+    # offer whatever corrections its data actually warrants.
+    forecast = client.get(f"/api/sessions/{session_id}/forecast", headers=auth_headers).json()
+    for item in forecast["forecasts"]:
+        assert item["available"] or item["reason"], f"{sample}: silent forecast refusal"
+    fixes = client.get(f"/api/sessions/{session_id}/quality/fixes", headers=auth_headers).json()
+    assert all(not proposal["accepted"] for proposal in fixes["proposals"]), \
+        f"{sample}: a fix was applied without being accepted"
+
+
+def test_the_two_sheet_sample_offers_a_join_that_holds_up(client, auth_headers):
+    """The sample that exists to exercise joins must actually support one."""
+    created = client.post("/api/samples/subscriptions/load", headers=auth_headers)
+    session_id = created.json()["id"]
+    assert wait_for(client, auth_headers, session_id)["status"] == "completed"
+
+    detected = client.get(f"/api/sessions/{session_id}/joins", headers=auth_headers).json()
+    assert detected["relationships"], "the two-sheet sample detected no relationship"
+    relationship = detected["relationships"][0]
+    assert relationship["join_ready"]
+
+    spec = {"left": relationship["left"], "right": relationship["right"],
+            "key": relationship["key"], "how": "inner"}
+    report = client.post(f"/api/sessions/{session_id}/joins/preview", headers=auth_headers,
+                         json=spec).json()
+    assert report["safe"], report["warnings"]
+    assert report["cardinality"] in {"many-to-one", "one-to-many", "one-to-one"}
+
+    joined_id = client.post(f"/api/sessions/{session_id}/joins", headers=auth_headers,
+                            json=spec).json()["id"]
+    assert wait_for(client, auth_headers, joined_id)["status"] == "completed"
+    joined = client.get(f"/api/sessions/{joined_id}/analysis", headers=auth_headers).json()
+
+    # The join must add the lookup sheet's dimensions to the analysis...
+    assert set(joined["profile"]["roles"]["dimension"]) > set(
+        client.get(f"/api/sessions/{session_id}/analysis",
+                   headers=auth_headers).json()["profile"]["roles"]["dimension"]
+    )
+    # ...without letting a repeated attribute be totalled or trended.
+    attributes = joined["profile"].get("attribute_columns", [])
+    assert attributes, "the lookup side's columns were not marked as repeated attributes"
+    for name in attributes:
+        column = next(c for c in joined["profile"]["columns"] if c["name"] == name)
+        if column["role"] == "measure":
+            assert column["aggregation"] == "mean", f"{name} would be summed across repeats"
+            assert column["additive"] is False
+        assert name not in [t["measure"] for t in joined["trends"]]
 
 
 # ---------------------------------------------------------------------------

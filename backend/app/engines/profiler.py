@@ -278,7 +278,8 @@ def infer_semantic_type(series: pd.Series, name: str) -> tuple[str, float, str, 
         notes.append("Stored as text; parsed as dates for analysis.")
         return (DATETIME if has_time else DATE), 0.8, "", notes
 
-    if _ratio(sum(1 for v in string_values if _ID_LIKE_RE.match(v)), sample_size) > 0.8 and unique_ratio > 0.7:
+    id_like_ratio = _ratio(sum(1 for v in string_values if _ID_LIKE_RE.match(v)), sample_size)
+    if id_like_ratio > 0.8 and unique_ratio > 0.7:
         return IDENTIFIER, 0.9, "", notes
     if unique_ratio > 0.95 and total > 20 and _name_suggests_id(lowered):
         return IDENTIFIER, 0.8, "", ["Unique per row with an identifier-style name."]
@@ -295,6 +296,15 @@ def infer_semantic_type(series: pd.Series, name: str) -> tuple[str, float, str, 
         return TEXT, 0.85, "", ["High-cardinality free text."]
     if unique <= 200 and avg_len <= 80:
         return CATEGORICAL, 0.6, "", ["High-cardinality categorical."]
+
+    # A repeating id is a *foreign key*: it identifies an entity that lives in
+    # another table. Without this branch it falls past every category test into
+    # free text and drops out of the analysis entirely, taking every cross-sheet
+    # relationship built on it with it.
+    if (id_like_ratio > 0.8 or _name_suggests_id(lowered)) and unique > 1 and word_count <= 2:
+        return IDENTIFIER, 0.75, "", [
+            "Identifier values that repeat - a key referring to another table."
+        ]
     return TEXT, 0.6, "", notes
 
 
@@ -636,7 +646,9 @@ def apply_overrides(
             column["aggregation"] = aggregation
             column["additive"] = aggregation == "sum"
         else:
-            column["aggregation"] = None
+            # Matches how the profiler serialises a non-measure: an empty
+            # string, never None, so consumers see one shape.
+            column["aggregation"] = ""
             column["additive"] = False
         if applied:
             changed = True

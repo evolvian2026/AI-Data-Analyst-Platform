@@ -40,7 +40,7 @@ Four services come up:
 | `db` | PostgreSQL with a named volume. |
 | `api` | FastAPI on Uvicorn with two workers, uploads on a named volume. |
 | `web` | The built frontend behind nginx, proxying `/api` to `api`. |
-| `cleanup` | Runs the retention sweep hourly. |
+| `cleanup` | Runs both retention sweeps hourly: uploaded files, and analyses once `RESULT_RETENTION_DAYS` is set. |
 
 There is deliberately no Redis service: analysis runs in an in-process worker
 pool and nothing connects to a queue today. Add Redis when you wire up Celery
@@ -111,7 +111,13 @@ Schedule the retention sweep:
 - [ ] `CORS_ORIGINS` lists only origins you control.
 - [ ] `ALLOW_REGISTRATION=false` if the deployment is not open to the public.
 - [ ] TLS terminated in front; HSTS enabled.
-- [ ] `FILE_RETENTION_HOURS` matches your data-handling policy.
+- [ ] `FILE_RETENTION_HOURS` matches your data-handling policy — this bounds
+      the uploaded workbook.
+- [ ] `RESULT_RETENTION_DAYS` matches it too. This bounds the *analysis*, which
+      holds aggregates, column names and sample values drawn from the upload.
+      It defaults to `0` (keep indefinitely) because an upgrade must not start
+      deleting a user's analyses unasked — so it is a deliberate choice, not a
+      default you can leave alone if you have a policy.
 - [ ] `AI_PROVIDER` is a deliberate choice. `deterministic` sends nothing
       anywhere; the others send aggregates and profiles to a third party.
 - [ ] `AI_ALLOW_RAW_ROWS` left `false`.
@@ -150,6 +156,7 @@ is already in place; only the dispatch call changes.
 | `MAX_ROWS_ANALYZED` | You need whole large workbooks analysed. | Memory pressure. |
 | `SAMPLE_ROWS_FOR_PROFILING` | Profiling accuracy on wide datasets matters more than speed. | Profiling is the slow stage. |
 | `MAX_CHARTS` | Analysts want more views. | Payloads are large. |
+| `RESULT_RETENTION_DAYS` | Never — raise means keep longer, so raise it only if your policy allows. | Your policy requires a shorter window; also bounds database growth. |
 | Uvicorn `--workers` | CPU-bound analysis is queueing. | Memory per worker is tight — each holds its own frame cache. |
 
 Rough sizing: a 5,000-row, 15-column workbook completes the full pipeline in
@@ -163,7 +170,7 @@ rows.
 
 | What | Where | Why it matters |
 |---|---|---|
-| Database | `db-data` volume | Contains users, sessions and **every analysis result**. Losing it loses the reports. |
+| Database | `db-data` volume | Contains users, sessions, insight ratings and **every analysis result**. Losing it loses the reports. |
 | Uploads | `uploads` volume | Only needed to re-explore rows or re-analyse. Retention-swept anyway, so a shorter backup horizon is reasonable. |
 
 ```bash
@@ -177,6 +184,16 @@ gunzip -c backup-2026-08-24.sql.gz | docker compose exec -T db psql -U analyst a
 Uploads are disposable by design: an analysis whose file has been swept still
 serves its report, and the UI explains that the file must be re-uploaded to
 explore rows again.
+
+**Two windows, deliberately separate.** `FILE_RETENTION_HOURS` removes the raw
+rows — the most sensitive artefact — while keeping the analysis readable.
+`RESULT_RETENTION_DAYS` removes the analysis itself, which still contains
+aggregates, column names and sample values taken from the file. Set both to
+match your policy; a retention sweep with `RESULT_RETENTION_DAYS=0` touches only
+files, which is the historical behaviour.
+
+Deleting an analysis is a hard delete: its notes, query log and share links
+cascade with it.
 
 ---
 
@@ -201,7 +218,7 @@ Being precise about this matters more than a green tick.
 **Verified**
 
 - The exact pinned dependency set in `requirements.txt` installs from scratch
-  and the full 191-test suite passes against it — so the image installs the
+  and the full 303-test suite passes against it — so the image installs the
   software the code was actually validated with, not a nearby version.
 - Both Dockerfile stages were replicated outside Docker: `pip wheel` builds all
   57 wheels, and `pip install --no-index --find-links=/wheels` then imports the
@@ -211,9 +228,13 @@ Being precise about this matters more than a green tick.
 - `npm ci` succeeds against the committed lockfile, and `npm run build`
   produces the bundle the frontend image copies into nginx.
 - `docker-compose.yml` parses and resolves.
-- **The full suite passes against PostgreSQL 16** as well as SQLite (193 tests
+- **The full suite passes against PostgreSQL 16** as well as SQLite (303 tests
   on each), with the schema created by `init_db()` and no connections left
   idle in transaction afterwards.
+- **The browser journey passes against the production bundle** — 127 checks,
+  no console errors — including the propose-and-confirm cleaning flow, a
+  cross-sheet join, a column-classification correction that re-runs the
+  analysis, a conversational follow-up, insight ratings and a projection.
 
 **Not verified**
 
@@ -237,5 +258,9 @@ Being precise about this matters more than a green tick.
 | Analysis stuck at `processing` | Check `docker compose logs api` — a parse failure sets `status: failed` with an explanation, but an OOM kill will not. |
 | A migration hangs | Something is holding an open transaction. Check `pg_stat_activity` for `idle in transaction`; the analysis worker deliberately holds no connection while it runs, so a hang points at another client. |
 | `410 Gone` when exploring rows | The upload passed its retention window. The analysis survives; re-upload to explore rows. |
+| `410 Gone` when correcting a column or applying a cleaning fix | Both re-run the analysis, which needs the file. It has been swept; re-upload the workbook. |
+| A whole analysis has vanished | `RESULT_RETENTION_DAYS` is set and the session passed it. `GET /api/sessions` reports `result_expires_at` before that happens. |
+| A join is refused with "would be overstated" | The key repeats on both sheets, so the join multiplies rows. Aggregate one sheet to one row per key first. |
+| The browser reports a CORS error on a request that should work | Check the API logs for a 500 on the same `X-Request-ID`. The CORS middleware is outermost so genuine errors keep their headers, but a proxy that strips them can reintroduce this. |
 | Browser blocked by CORS | `CORS_ORIGINS` does not list the origin the browser is using. |
 | Report generation times out | Raise the proxy read timeout; a detailed report on a large dataset takes a few seconds. |

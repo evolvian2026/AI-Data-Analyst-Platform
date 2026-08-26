@@ -582,6 +582,7 @@ def get_columns(session_id: str, user: CurrentUser, db: DbSession) -> dict[str, 
             "missing_pct": column.get("missing_pct"),
             "unique": column.get("unique"),
             "overridden": column.get("overridden", []),
+            "repeated_attribute": bool(column.get("repeated_attribute")),
             "options": {
                 "roles": option.get("roles", []),
                 "semantic_types": option.get("semantic_types", []),

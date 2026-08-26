@@ -4,8 +4,8 @@ Three layers:
 
 | Layer | What it proves | How to run |
 |---|---|---|
-| **193 backend tests** | Every engine behaves, the API contract holds, and — in `test_e2e.py` — every reported figure matches an independent pandas recomputation of the source workbook. | `cd backend && pytest` |
-| **84 browser checks** | The real production bundle works for a real user: routing, rendering, charts, downloads, theme, responsive layout, isolation. | `cd frontend && npm run e2e` |
+| **303 backend tests** | Every engine behaves, the API contract holds, and — in `test_e2e.py` — every reported figure matches an independent pandas recomputation of the source workbook. | `cd backend && pytest` |
+| **127 browser checks** | The real production bundle works for a real user: routing, rendering, charts, downloads, theme, responsive layout, isolation. | `cd frontend && npm run e2e` |
 | **Type checking** | The frontend compiles under strict TypeScript. | `cd frontend && npm run lint` |
 
 The backend suite passes on both SQLite (the default) and PostgreSQL. Run it
@@ -20,6 +20,7 @@ cd backend
 pip install -r requirements-dev.txt  # runtime deps plus pytest and pypdf
 pytest                              # everything
 pytest tests/test_e2e.py -v         # the journey and the verification layer
+pytest tests/test_forecasting.py    # what projection produces, and refuses to
 pytest tests/test_security.py -v    # one area
 pytest -k "insight or story"        # by name
 pytest -x --lf                      # stop at the first failure, rerun last failures
@@ -32,7 +33,7 @@ The browser journey needs a running API and a built frontend; see
 cd frontend
 npm run lint                        # TypeScript, strict mode
 npm run build
-npm run e2e                         # 84 checks against the built bundle
+npm run e2e                         # 127 checks against the built bundle
 ```
 
 ---
@@ -46,9 +47,14 @@ npm run e2e                         # 84 checks against the built bundle
 | `test_analytics.py` | 28 | KPI calculation and prioritisation, derived metric validity, trend direction, frequency selection, partial-period trimming, percentage-change guards, volume-vs-value decomposition, outlier detection, time-series anomalies, anomaly investigation, correlation, segment comparison, concentration, distributions. |
 | `test_insights_and_story.py` | 24 | Insight ranking, the six priority components, fact/interpretation/recommendation separation, evidence traceability, hedging on low-confidence claims, de-duplication, story section order, supporting evidence, executive summary length, the story score, recommendations and the briefing, audience adaptation. |
 | `test_reports.py` | 14 | PDF generation for every style, page-count ranges, cover customisation, page numbers, table of contents, section selection, chart rendering, Excel sheet contents, formula-injection escaping. |
-| `test_security.py` | 35 | Prompt injection detection and neutralisation, data-block isolation, injection through workbook cells, question safety, formula injection, path traversal, authentication, account enumeration, cross-user isolation, malicious and oversized uploads, AI verification, security headers. |
+| `test_security.py` | 36 | Prompt injection detection and neutralisation, data-block isolation, injection through workbook cells, question safety, formula injection, path traversal, authentication, account enumeration, cross-user isolation, malicious and oversized uploads, AI verification, security headers. |
 | `test_api.py` | 24 | Registration and login, pipeline progress, the analysis payload, chart rationale, Ask Your Data, filters, drill-down, anomaly investigation, audience adaptation, data exploration, downloads, sharing, re-analysis, samples, deletion, retention. |
-| `test_e2e.py` | 33 | The complete journey through the API in the order a user performs it; **independent verification of every reported figure against pandas**; all five samples through the full journey including all three report styles; failure paths; the deployment settings that only break once deployed, and the connection
+| `test_forecasting.py` | 16 | Method selection (trend, level, seasonal), the F-test that stops two cycles of noise becoming a seasonal pattern, every refusal path, interval bounds, the non-negative floor, the horizon cap, and — most importantly — that no projected value reaches a trend series, a KPI or a measured chart series. |
+| `test_comparison.py` | 14 | Structural matching of metrics, segments and findings; added, removed and incomparable metrics; movement arithmetic against the underlying values; the longer-period caveat; findings matched by subject rather than wording; the zero-baseline guard; a self-comparison reporting no movement. |
+| `test_cleaning.py` | 21 | Proposals generated only for problems that exist, each with its cost, examples and risk; nothing applied until accepted; the source frame never mutated; removing the recipe restoring the original analysis exactly; the audit; recipe validation; and column-classification overrides, including the refusal to make text a measure. |
+| `test_conversation.py` | 25 | Follow-up detection both ways, inheritance only into empty slots, the stated interpretation, the carried filter; and feedback that reorders without rewriting, stays bounded, cannot bury a dominant finding, and survives renumbering. |
+| `test_extensions_api.py` | 31 | Every new endpoint end to end: corrections that reach the numbers, preview-before-apply, join preview and refusal, joined attributes never summed or trended, comparable-session discovery, cross-user isolation on comparison and feedback, the forecast contract, and both retention windows. |
+| `test_e2e.py` | 35 | The complete journey through the API in the order a user performs it; **independent verification of every reported figure against pandas**; all six samples through the full journey including all three report styles, and the two-sheet sample's join; failure paths; the deployment settings that only break once deployed, and the connection
 discipline that only PostgreSQL enforces. |
 
 ---
@@ -100,6 +106,28 @@ reported as a quality issue, and never appears in the analysis output.
 **Report length matches the chosen style** — executive 2–5 pages, standard
 5–15, detailed 15+ — enforced by counting the pages of a real generated PDF.
 
+**A projection can never be mistaken for a measurement.** No projected value may
+appear in a trend series, a KPI, or the measured series of a chart:
+
+```python
+def test_projections_never_enter_the_measured_series(sales_analysis):
+    for trend in sales_analysis["trends"]:
+        for point in trend["points"]:
+            assert "projected" not in point
+            assert point["value"] is not None
+```
+
+**Feedback moves order, never content.** A rated insight keeps its headline, its
+evidence and its confidence byte for byte, and the adjustment is bounded so a
+downvote cannot bury a finding the statistics put far above its neighbours.
+
+**Nothing is cleaned without being accepted**, the source frame is never
+mutated, and clearing the recipe restores the original analysis exactly —
+asserted by comparing the quality score and row count before and after.
+
+**A join that would inflate totals is refused**, at the API boundary rather than
+in the worker, so it produces an explanation instead of a failed session.
+
 ---
 
 ## The verification layer
@@ -138,6 +166,7 @@ were introduced to confirm these bite:
 |---|---|
 | Inflate every summed KPI by 0.5% | Caught — KPI totals and the Excel export both failed. |
 | Drop the last group from every segment comparison | **Survived at first.** The test checked that reported groups were correct but never that all groups were reported. The assertion was strengthened, and the mutation then failed it. |
+| Register the CORS middleware inside the catch-all error handler instead of outside it | Caught — `test_a_server_error_still_carries_its_cors_headers` failed, which is the point: with that ordering a 500 reaches the browser as an opaque CORS error and the real cause is invisible. |
 
 ---
 
@@ -150,6 +179,8 @@ were introduced to confirm these bite:
 | `sales_frame` / `sales_workbook` | Two years of daily orders with a planted growth trend, regional concentration and a derived Profit column. |
 | `sales_analysis` | The full pipeline result for that workbook, computed once per session. |
 | `messy_frame` | Deliberately dirty: duplicate ids, inconsistent category spellings, currency stored as text, an unparseable number, a bad date, a constant column. |
+| `messy_workbook` | The same kind of mess as a real workbook, used to exercise the cleaning proposals end to end. |
+| `two_sheet_workbook` | Orders and customers sharing a key, for the join tests. |
 | `client` | A `TestClient` bound to a fresh database. |
 | `auth_headers` | A registered user's bearer token. |
 
@@ -192,9 +223,14 @@ for the full list. Several checks assert a *refusal*, which is the point:
 * Anomaly investigation must say "association" or "not causation".
 * A prompt-injection question must not surface the system prompt.
 * A second account must get "not found", not an empty dashboard.
+* A text column must not be offered as a measure, whatever the user wants.
+* No cleaning proposal may be accepted until someone accepts it.
+* Rating a finding must not remove it or change a word of it.
+* With only one analysis, "What Changed" must say so rather than invent a
+  comparison.
 
 Console errors are part of the pass condition. A clean run is
-`84 passed / 0 failed / 0 console errors`.
+`127 passed / 0 failed / 0 console errors`.
 
 ---
 
@@ -235,6 +271,26 @@ And from the end-to-end layers:
   it deadlocked the test teardown. The worker now holds no session across the
   computation, and a regression test asserts the pool is empty at the moment
   the analysis begins.
+* **A server error reached the browser as a CORS failure.** The catch-all error
+  handler returns its 500 directly, and it was registered *outside* the CORS
+  middleware — so that response carried no `Access-Control-Allow-Origin`. The
+  browser then reported a CORS problem for what was really an unhandled
+  exception, hiding the actual cause from whoever had to debug it. Found while
+  running the browser journey against a broken database.
+* **A foreign key disappeared from the analysis.** An id-shaped column whose
+  values repeat — `Account ID` appearing 5,062 times across 260 accounts — fell
+  past every categorical test into free text and was classified `descriptive`.
+  That made it invisible to cross-sheet relationship detection, so a workbook
+  with a perfectly good join key reported no relationships at all.
+* **A joined lookup column produced a fabricated trend.** After a many-to-one
+  join, `Credit Limit` repeats on every order, so the "90% increase in August"
+  the trend engine found was the month's order mix, not any change in credit
+  limits. Columns fanned out by a join are now averaged rather than summed and
+  excluded from trends.
+* **An analysis claimed to cover a whole workbook when it covered one sheet.**
+  `combine_sheets` correctly refuses to stack sheets with different schemas, but
+  the scope was reported as `__workbook__` whenever the file had more than one
+  sheet — regardless of how many were actually analysed.
 * **SVG chart export silently dropped every CSS-driven colour.** Computed styles
   were read from a detached clone, where `getComputedStyle` returns nothing, so
   the inlining loop wrote no styles at all. Axis labels fell back to black —

@@ -11,6 +11,8 @@ const NAV = [
   { to: 'dashboard', label: 'Dashboard' },
   { to: 'insights', label: 'Insights' },
   { to: 'ask', label: 'Ask Your Data' },
+  { to: 'forecast', label: 'Projection' },
+  { to: 'compare', label: 'What Changed' },
   { to: 'quality', label: 'Data Quality' },
   { to: 'explore', label: 'Explore Data' },
   { to: 'reports', label: 'Reports' },
@@ -87,8 +89,21 @@ export function AnalysisLayout() {
             <span className="tnum text-xs text-muted">
               {analysis.profile.row_count.toLocaleString()} rows ·{' '}
               {analysis.profile.column_count} columns
-              {analysis.active_sheet !== '__workbook__' && ` · sheet ${analysis.active_sheet}`}
+              {analysis.active_sheet !== '__workbook__' && ` · ${analysis.scope === 'join'
+                ? analysis.active_sheet : `sheet ${analysis.active_sheet}`}`}
             </span>
+            {analysis.cleaning && analysis.cleaning.applied_count > 0 && (
+              <span className="chip border-accent/40 text-accent"
+                title={analysis.cleaning.statement}>
+                cleaned data
+              </span>
+            )}
+            {(analysis.profile.overrides_applied?.length ?? 0) > 0 && (
+              <span className="chip border-accent/40 text-accent"
+                title={`Corrected classification: ${analysis.profile.overrides_applied?.join(', ')}`}>
+                columns corrected
+              </span>
+            )}
           </div>
           <nav aria-label="Analysis sections"
             className="-mb-px flex gap-1 overflow-x-auto pt-2">

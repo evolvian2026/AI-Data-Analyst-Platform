@@ -42,6 +42,15 @@ SAMPLES = {
                        "efficiency metrics and clear channel winners and losers.",
         "highlights": ["Derived KPIs", "Winners / underperformers", "Correlation"],
     },
+    "subscriptions": {
+        "title": "SaaS Subscriptions",
+        "filename": "sample_subscriptions.xlsx",
+        "description": "Two sheets that share an Account ID - monthly subscription revenue and "
+                       "an account lookup - plus a few inconsistently spelled values, so the "
+                       "join and the data-cleaning flows both have something real to work on.",
+        "highlights": ["Cross-sheet join", "Propose-and-confirm fixes", "Churn by segment",
+                       "Projection"],
+    },
     "finance": {
         "title": "Financial Transactions",
         "filename": "sample_finance.xlsx",
@@ -256,11 +265,83 @@ def build_finance() -> pd.DataFrame:
     return df
 
 
+def build_subscriptions() -> dict[str, pd.DataFrame]:
+    """Two related sheets, deliberately imperfect.
+
+    Every other sample is a single tidy table. This one exists so the join and
+    the propose-and-confirm cleaning flows can be tried on real data: the sheets
+    share an Account ID in a clean many-to-one relationship, and a handful of
+    values are spelled inconsistently or stored as text the way they are in
+    workbooks people actually send.
+    """
+    rng = _rng(59)
+    plans = ["Starter", "Growth", "Scale", "Enterprise"]
+    plan_price = {"Starter": 49.0, "Growth": 199.0, "Scale": 599.0, "Enterprise": 2400.0}
+    industries = ["Retail", "Healthcare", "Logistics", "Education", "Fintech"]
+    account_count = 260
+
+    accounts = pd.DataFrame({
+        "Account ID": [f"ACC{i:05d}" for i in range(1, account_count + 1)],
+        "Account Name": [f"Account {i}" for i in range(1, account_count + 1)],
+        "Industry": rng.choice(industries, account_count, p=[.28, .18, .2, .16, .18]),
+        "Country": rng.choice(["India", "United Kingdom", "United States", "Singapore"],
+                              account_count, p=[.38, .22, .28, .12]),
+        "Plan": rng.choice(plans, account_count, p=[.34, .33, .23, .10]),
+        "Signed Up": pd.to_datetime("2023-01-01") + pd.to_timedelta(
+            rng.integers(0, 700, account_count), unit="D"),
+        "Seats": rng.integers(2, 400, account_count),
+    })
+
+    months = pd.date_range("2024-01-01", "2025-12-01", freq="MS")
+    seasonal = {1: 0.94, 2: 0.96, 3: 1.05, 4: 1.02, 5: 1.0, 6: 1.03,
+                7: 0.97, 8: 0.95, 9: 1.06, 10: 1.08, 11: 1.12, 12: 1.09}
+    rows = []
+    for index, account in accounts.iterrows():
+        # Accounts churn at some point; a churned account stops billing.
+        churn_month = (
+            int(rng.integers(6, len(months)))
+            if rng.random() < 0.22 else len(months)
+        )
+        start = int(rng.integers(0, 6))
+        for position, month in enumerate(months):
+            if position < start or position >= churn_month:
+                continue
+            growth = 1 + 0.011 * position
+            price = plan_price[account["Plan"]] * growth * seasonal[month.month]
+            rows.append({
+                "Invoice ID": f"INV{len(rows) + 1:06d}",
+                "Account ID": account["Account ID"],
+                "Billing Month": month,
+                "Subscription Revenue": round(price * rng.uniform(0.92, 1.1), 2),
+                "Support Tickets": int(rng.poisson(1.6)),
+                "Status": rng.choice(["Paid", "Paid", "Paid", "Overdue"]),
+            })
+    invoices = pd.DataFrame(rows)
+
+    # Planted imperfections, each of a kind the cleaning engine can propose a
+    # fix for - and each the kind a real export actually contains.
+    spellings = rng.choice(invoices.index, 400, replace=False)
+    invoices.loc[spellings[:200], "Status"] = "paid"
+    invoices.loc[spellings[200:320], "Status"] = "OVERDUE"
+    invoices["Subscription Revenue"] = invoices["Subscription Revenue"].astype(object)
+    unreadable = rng.choice(invoices.index, 25, replace=False)
+    invoices.loc[unreadable, "Subscription Revenue"] = "n/a"
+
+    industry_typos = rng.choice(accounts.index, 30, replace=False)
+    accounts.loc[industry_typos[:15], "Industry"] = \
+        accounts.loc[industry_typos[:15], "Industry"].str.upper()
+    accounts.loc[industry_typos[15:], "Industry"] = \
+        accounts.loc[industry_typos[15:], "Industry"].str.lower()
+
+    return {"Subscriptions": invoices, "Accounts": accounts}
+
+
 BUILDERS = {
     "sales": build_sales,
     "students": build_students,
     "employees": build_employees,
     "marketing": build_marketing,
+    "subscriptions": build_subscriptions,
     "finance": build_finance,
 }
 
@@ -272,10 +353,16 @@ def build_all(target: Path | None = None) -> dict[str, Path]:
     for key, meta in SAMPLES.items():
         path = directory / meta["filename"]
         if not path.exists():
-            frame = BUILDERS[key]()
-            sheet_name = re.sub(r"[\[\]:*?/\\]", "-", meta["title"])[:31]
+            built = BUILDERS[key]()
+            # A builder returns either one table or a named set of sheets.
+            sheets = built if isinstance(built, dict) else {
+                re.sub(r"[\[\]:*?/\\]", "-", meta["title"])[:31]: built
+            }
             with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
-                frame.to_excel(writer, sheet_name=sheet_name, index=False)
+                for name, frame in sheets.items():
+                    frame.to_excel(
+                        writer, sheet_name=re.sub(r"[\[\]:*?/\\]", "-", name)[:31], index=False,
+                    )
         paths[key] = path
     return paths
 

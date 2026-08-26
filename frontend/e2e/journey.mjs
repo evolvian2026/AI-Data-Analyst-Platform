@@ -325,6 +325,30 @@ try {
   check('a prompt-injection question is answered as data, not obeyed',
     !hostileBody.toLowerCase().includes('you are a careful data analyst'))
 
+  // Follow-up: a question that only makes sense after the previous one.
+  await page.getByRole('button', { name: 'Start a new thread' }).click()
+  await page.waitForTimeout(400)
+  await page.fill('input[aria-label="Your question"]', 'Which Region has the highest Revenue?')
+  await page.getByRole('button', { name: 'Ask', exact: true }).click()
+  await page.waitForTimeout(3200)
+  check('an answer states how the question was read',
+    (await page.getByText('Understood as:').count()) > 0)
+
+  await page.fill('input[aria-label="Your question"]', 'and by Product?')
+  await page.getByRole('button', { name: 'Ask', exact: true }).click()
+  await page.waitForTimeout(3200)
+  const followBody = await page.locator('body').innerText()
+  check('a follow-up is recognised as one',
+    (await page.getByText('follow-up').count()) > 0)
+  check('a follow-up says what it carried over from the previous question',
+    /carried over from your previous question/.test(followBody))
+  // "and by Product?" names no measure, so it must reuse Revenue from the
+  // previous question - and say so, rather than silently picking one.
+  check('a follow-up inherits the measure it did not name',
+    /Understood as: the highest Product by Revenue/.test(followBody)
+    && /carried over from your previous question: [^.]*measure/.test(followBody))
+  await shot('e2e-ask-followup')
+
   // -------------------------------------------------------------------------
   section('Data Quality')
   await page.getByRole('link', { name: 'Data Quality', exact: true }).first().click()
@@ -339,7 +363,197 @@ try {
     qualityBody.includes('Column classification'))
   check('issues state their impact on the analysis',
     qualityBody.includes('Impact.') || !qualityBody.includes('Issues and their impact'))
+  check('cleaning is offered as a proposal, never applied automatically',
+    qualityBody.includes('Nothing to fix')
+    || /Nothing is corrected automatically/.test(qualityBody))
+  check('the uploaded file is stated to be untouched',
+    qualityBody.includes('Nothing to fix')
+    || /uploaded file is never modified/.test(qualityBody))
   await shot('e2e-quality')
+
+  // -------------------------------------------------------------------------
+  section('Projection')
+  await page.getByRole('link', { name: 'Projection', exact: true }).first().click()
+  await page.waitForTimeout(2500)
+  const forecastBody = await page.locator('body').innerText()
+  check('the projection page states that projections are not measurements',
+    /not a measurement|model output, not measured/i.test(forecastBody))
+  const projected = await page.getByText(/Projection - not a measured value|prediction interval/)
+    .count()
+  const refused = await page.getByText('Not projected').count()
+  check('every measure is either projected or refused with a reason',
+    projected > 0 || refused > 0)
+  if (projected > 0) {
+    check('a projection shows its prediction interval',
+      /prediction interval/i.test(forecastBody))
+    check('a projection names the method it used',
+      /Linear trend extrapolation|Recent level|Seasonal/.test(forecastBody))
+    check('a projection lists its assumptions',
+      /assume the pattern in the measured history continues/.test(forecastBody))
+  } else {
+    check('a refusal explains why nothing could be projected',
+      /Not projected|cannot be projected/.test(forecastBody))
+    check('the refusal names the measures it withheld', refused > 0)
+    check('the page still states the policy', /model output/i.test(forecastBody))
+  }
+  await shot('e2e-forecast')
+
+  // -------------------------------------------------------------------------
+  section('Column classification override')
+  await page.goto(`${BASE}${analysisUrl}`)
+  await page.getByText('Show the math').first().waitFor({ timeout: 60000 })
+  await page.getByRole('button', { name: 'Review how columns are read' }).click()
+  await page.waitForTimeout(2000)
+  const columnsBody = await page.locator('body').innerText()
+  check('the inferred classification of every column is shown',
+    /How each column is being read/.test(columnsBody))
+  check('a correction is described as re-running the whole analysis',
+    /re-runs the whole analysis/.test(columnsBody))
+
+  // Region is text: it must not be offered as a measure, however it is asked for.
+  const regionRole = page.locator('select[aria-label="Role of Region"]')
+  const regionOptions = await regionRole.locator('option').allInnerTexts()
+  check('a text column is never offered as a measure',
+    !regionOptions.map((o) => o.toLowerCase()).includes('measure'),
+    regionOptions.join('/'))
+  const revenueOptions = await page.locator('select[aria-label="Role of Revenue"] option')
+    .allInnerTexts()
+  check('a numeric column is offered as a measure',
+    revenueOptions.map((o) => o.toLowerCase()).includes('measure'))
+  check('the panel explains what a column cannot be used for',
+    /cannot be analysed as a measure/.test(columnsBody))
+
+  // Apply a real correction and confirm it reaches the numbers.
+  await page.selectOption('select[aria-label="Aggregation of Units"]', 'mean')
+  await page.waitForTimeout(300)
+  await page.getByRole('button', { name: 'Apply and re-analyse' }).click()
+  await page.waitForTimeout(9000)
+  await page.goto(`${BASE}${analysisUrl}`)
+  await page.getByText('Show the math').first().waitFor({ timeout: 60000 })
+  check('an applied correction is visible on the analysis',
+    (await page.getByText('columns corrected').count()) > 0
+    || (await page.getByText(/column correction\(s\) applied/).count()) > 0)
+  await shot('e2e-columns')
+
+  // -------------------------------------------------------------------------
+  section('Insight feedback')
+  await page.getByRole('link', { name: 'Insights', exact: true }).first().click()
+  await page.waitForTimeout(2500)
+  const firstHeadline = await page.locator('article h3').first().innerText()
+  const beforeCount = await page.locator('article').count()
+  await page.getByRole('button', { name: 'Mark this finding not useful' }).first().click()
+  await page.waitForTimeout(2500)
+  const afterFeedback = await page.locator('body').innerText()
+  check('a rating is recorded and explained',
+    /Ranked (higher|lower) because|Ranking adapted to you/.test(afterFeedback))
+  check('rating a finding never removes it',
+    (await page.locator('article').count()) === beforeCount)
+  check('rating a finding never rewrites it',
+    afterFeedback.includes(firstHeadline))
+  check('the bound on feedback is stated',
+    /at most 8 points|order only/.test(afterFeedback))
+  await shot('e2e-feedback')
+
+  // -------------------------------------------------------------------------
+  section('What Changed')
+  await page.getByRole('link', { name: 'What Changed', exact: true }).first().click()
+  await page.waitForTimeout(2500)
+  const compareEmpty = await page.getByText('Nothing to compare against yet').count()
+  check('with only one analysis, the page says so rather than inventing a comparison',
+    compareEmpty > 0)
+
+  // Load the same sample again, then compare the two.
+  await page.goto(`${BASE}/app`)
+  await page.waitForTimeout(1500)
+  await page.getByRole('button', { name: /Retail Sales Performance/ }).first().click()
+  await page.waitForURL(/\/processing|\/overview/, { timeout: 20000 })
+  await page.waitForURL('**/overview', { timeout: 120000 })
+  await page.getByText('Show the math').first().waitFor({ timeout: 60000 })
+  await page.getByRole('link', { name: 'What Changed', exact: true }).first().click()
+  await page.waitForTimeout(4000)
+  const compareBody = await page.locator('body').innerText()
+  check('an earlier analysis is offered for comparison',
+    (await page.locator('select[aria-label="Earlier analysis to compare with"]').count()) > 0)
+  check('the comparison leads with what moved', /% comparable/.test(compareBody))
+  check('metrics are compared before and after',
+    /Before/.test(compareBody) && /After/.test(compareBody))
+  check('the matching method is stated', /matched by/.test(compareBody))
+  check('identical uploads report no movement',
+    /No headline metric moved|Both datasets hold/.test(compareBody))
+  await shot('e2e-compare')
+
+  // -------------------------------------------------------------------------
+  // The two-sheet sample: the only one that can exercise joins and cleaning.
+  section('Cleaning and joins')
+  await page.goto(`${BASE}/app`)
+  await page.waitForTimeout(1500)
+  await page.getByRole('button', { name: /SaaS Subscriptions/ }).first().click()
+  await page.waitForURL(/\/processing|\/overview/, { timeout: 20000 })
+  await page.waitForURL('**/overview', { timeout: 120000 })
+  await page.getByText('Show the math').first().waitFor({ timeout: 60000 })
+  const joinUrl = new URL(page.url()).pathname
+
+  await page.getByRole('link', { name: 'Data Quality', exact: true }).first().click()
+  await page.waitForTimeout(2500)
+  const fixBody = await page.locator('body').innerText()
+  check('a correction is proposed for the inconsistent values',
+    /Merge \d+ spelling variant/.test(fixBody))
+  check('a proposal shows real before and after values',
+    /Before/.test(fixBody) && /After/.test(fixBody))
+  check('a proposal states its risk', /Risk:/.test(fixBody))
+  check('no proposal is accepted until someone accepts it',
+    (await page.locator('input[type=checkbox][aria-label^="Accept:"]:checked').count()) === 0)
+
+  await page.locator('input[type=checkbox][aria-label^="Accept:"]').first().check()
+  await page.waitForTimeout(300)
+  await page.getByRole('button', { name: 'Preview the effect' }).click()
+  await page.waitForTimeout(2500)
+  const previewBody = await page.locator('body').innerText()
+  check('previewing states what would change and that nothing has been applied',
+    /Nothing has been applied yet/.test(previewBody))
+
+  await page.getByRole('button', { name: /Apply \d+ fix/ }).click()
+  await page.waitForURL('**/processing', { timeout: 20000 })
+  await page.waitForURL('**/overview', { timeout: 120000 })
+  await page.getByText('Show the math').first().waitFor({ timeout: 60000 })
+  check('an applied fix is declared on every page of the analysis',
+    (await page.getByText('cleaned data').count()) > 0)
+  await page.getByRole('link', { name: 'Data Quality', exact: true }).first().click()
+  await page.waitForTimeout(2500)
+  const cleanedBody = await page.locator('body').innerText()
+  check('the applied cleaning is audited',
+    /This analysis is calculated from cleaned data/.test(cleanedBody))
+  check('the uploaded file is still declared untouched',
+    /uploaded file itself is unchanged/.test(cleanedBody))
+  await shot('e2e-cleaning')
+
+  await page.goto(`${BASE}${joinUrl}`)
+  await page.getByText('Show the math').first().waitFor({ timeout: 60000 })
+  check('a relationship between the sheets is detected',
+    (await page.getByText(/appears in both/).count()) > 0)
+  await page.getByRole('button', { name: 'Combine sheets' }).click()
+  await page.waitForTimeout(2500)
+  const joinBody = await page.locator('body').innerText()
+  check('a join is previewed before it is run', /Result size/.test(joinBody))
+  check('the preview states how many rows find a match', /Matched in/.test(joinBody))
+  check('the preview names the relationship', /many-to-one|one-to-many|one-to-one/.test(joinBody))
+  check('the preview warns about repeated lookup columns',
+    /repeated on every matching row/.test(joinBody))
+  await shot('e2e-join-preview')
+
+  await page.getByRole('button', { name: 'Join and analyse' }).click()
+  await page.waitForURL('**/processing', { timeout: 20000 })
+  await page.waitForURL('**/overview', { timeout: 120000 })
+  await page.getByText('Show the math').first().waitFor({ timeout: 60000 })
+  const joinedBody = await page.locator('body').innerText()
+  check('the join produces its own analysis', page.url() !== `${BASE}${joinUrl}`)
+  check('the joined analysis says how it was built', /join of .* on /i.test(joinedBody))
+  check('the joined analysis warns that lookup columns repeat',
+    /repeated on every matching row/.test(joinedBody))
+  await shot('e2e-joined')
+
+  await page.goto(`${BASE}${analysisUrl}`)
+  await page.getByText('Show the math').first().waitFor({ timeout: 60000 })
 
   // -------------------------------------------------------------------------
   section('Explore Data')

@@ -16,6 +16,8 @@ import { AskPage } from './pages/Ask'
 import { QualityPage } from './pages/Quality'
 import { ExplorePage } from './pages/Explore'
 import { ReportsPage } from './pages/Reports'
+import { ForecastPage } from './pages/Forecast'
+import { ComparePage } from './pages/Compare'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -49,6 +51,8 @@ export function App() {
                 <Route path="dashboard" element={<DashboardPage />} />
                 <Route path="insights" element={<InsightsPage />} />
                 <Route path="ask" element={<AskPage />} />
+                <Route path="forecast" element={<ForecastPage />} />
+                <Route path="compare" element={<ComparePage />} />
                 <Route path="quality" element={<QualityPage />} />
                 <Route path="explore" element={<ExplorePage />} />
                 <Route path="reports" element={<ReportsPage />} />

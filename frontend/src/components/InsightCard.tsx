@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Insight } from '../lib/types'
+import type { FeedbackVote, Insight } from '../lib/types'
 import { clsx } from '../lib/format'
 import { ConfidenceBadge } from './Primitives'
 import { EvidencePanel } from './EvidencePanel'
@@ -25,11 +25,12 @@ interface Props {
   onNote?: (id: string, note: string) => void
   onAsk?: (question: string) => void
   onInvestigate?: (anomalyId: string) => void
+  onRate?: (id: string, vote: FeedbackVote | 'clear') => void
   chartSlot?: React.ReactNode
 }
 
 export function InsightCard({
-  insight, rank, bookmarked, note, onBookmark, onNote, onAsk, onInvestigate, chartSlot,
+  insight, rank, bookmarked, note, onBookmark, onNote, onAsk, onInvestigate, onRate, chartSlot,
 }: Props) {
   const [showEvidence, setShowEvidence] = useState(false)
   const [editingNote, setEditingNote] = useState(false)
@@ -52,6 +53,14 @@ export function InsightCard({
             <span className="tnum text-[11px] text-muted" title="Insight priority score">
               priority {insight.priority.score.toFixed(0)}
             </span>
+            {!!insight.priority.feedback_adjustment && (
+              <span className="tnum chip border-line text-muted"
+                title={insight.priority.feedback_reason}>
+                {insight.priority.feedback_adjustment > 0 ? '↑' : '↓'} your rating
+                {' '}({insight.priority.feedback_adjustment > 0 ? '+' : ''}
+                {insight.priority.feedback_adjustment.toFixed(1)})
+              </span>
+            )}
           </div>
           <h3 className="text-base font-semibold leading-snug text-ink">{insight.headline}</h3>
         </div>
@@ -112,7 +121,35 @@ export function InsightCard({
             {note ? 'Edit note' : 'Add note'}
           </button>
         )}
+        {onRate && (
+          <div className="ml-auto flex items-center gap-1" role="group"
+            aria-label="Was this finding useful?">
+            <span className="text-[11px] text-muted">Useful?</span>
+            <button type="button"
+              aria-pressed={insight.your_vote === 'useful'}
+              aria-label="Mark this finding useful"
+              onClick={() => onRate(insight.id,
+                insight.your_vote === 'useful' ? 'clear' : 'useful')}
+              className={clsx('btn-ghost px-2 py-1 text-sm',
+                insight.your_vote === 'useful' && 'text-good')}>
+              ▲
+            </button>
+            <button type="button"
+              aria-pressed={insight.your_vote === 'not_useful'}
+              aria-label="Mark this finding not useful"
+              onClick={() => onRate(insight.id,
+                insight.your_vote === 'not_useful' ? 'clear' : 'not_useful')}
+              className={clsx('btn-ghost px-2 py-1 text-sm',
+                insight.your_vote === 'not_useful' && 'text-serious')}>
+              ▼
+            </button>
+          </div>
+        )}
       </div>
+
+      {insight.priority.feedback_reason && (
+        <p className="mt-2 text-[11px] text-muted">{insight.priority.feedback_reason}</p>
+      )}
 
       {showEvidence && (
         <div className="mt-3 animate-fade-in">

@@ -49,8 +49,15 @@ Each claim carries the columns, calculation, values and record count behind it.
 | **Finds anomalies** | IQR fences confirmed by a modified z-score for records, de-trended residuals for time series, then an investigation pass that decomposes an anomalous period across every dimension — phrased as concentration and coincidence, never causation. |
 | **Ranks insights** | Every finding gets a priority score from magnitude, unusualness, relevance, confidence, coverage and analytical importance, so a 32% revenue drop outranks a 1.1% move in average order value. |
 | **Tells a Data Story** | Twelve sections from Executive Summary to Next Questions, ordered by analytical importance, each card carrying a headline, a supporting number, a chart, the evidence, a confidence level and a next step. |
-| **Answers questions** | A controlled query layer: intent detection → column mapping → validated calculation. No code is ever generated or executed from a question. |
+| **Answers questions** | A controlled query layer: intent detection → column mapping → validated calculation. No code is ever generated or executed from a question. Follow-ups carry the previous question forward. |
 | **Produces reports** | Executive (2–5 pages), Standard (5–15) or Detailed (15+) PDFs with native charts, a table of contents, page numbers and a methodology appendix — plus a 17-sheet Excel analysis workbook. |
+| **Says what changed** | Re-upload a refreshed workbook and it diffs the two analyses: KPI movements, segment rank and share shifts, quality issues resolved and introduced, trend reversals, and findings that appeared, went away or persisted — matched structurally, so a metric present in only one run is reported as added, never silently compared. |
+| **Takes corrections** | Profiling is inference, and inference is sometimes wrong. Any column's type, role or aggregation can be corrected, and the whole analysis re-runs with the column read your way. Only classifications the data can support are offered — text is never a measure. |
+| **Answers follow-ups** | "Which region leads on revenue?" then "and by product?" — the second question inherits what the first established, and every answer states how it was read. |
+| **Combines sheets** | A detected relationship between two sheets becomes a join, previewed first: how many rows find a match, what the join costs, and whether it would multiply rows. A fan-out that would inflate every total is refused, not analysed. |
+| **Projects forward** | An OLS or seasonal projection with a prediction interval — withheld entirely when the data cannot support one, and drawn as a separate dashed series so a projected value can never be mistaken for a measured one. |
+| **Proposes fixes** | Inconsistent spellings, numbers stored as text, duplicated rows: each proposed with the exact cell count, real before/after values and an honest risk statement. Nothing is applied until it is accepted, and the uploaded file is never modified. |
+| **Learns what you value** | Rate a finding useful or not and the ordering adapts, bounded and explained. It moves ranking only — never a number, a confidence level, or whether a finding reaches a report. |
 
 ### It cannot make numbers up
 
@@ -60,6 +67,13 @@ model is called at all**. When a model *is* configured it may only rephrase that
 narration, and every figure in its response is checked against the evidence —
 any unverifiable number causes the whole response to be discarded in favour of
 the engine's wording. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#ai-layer).
+
+**The one exception, stated plainly.** A *projection* is a number that was never
+measured — that is what a forecast is. It is therefore kept structurally apart
+from everything else: projected periods never enter a trend series, a KPI, a
+total or a share; they are drawn as a separate dashed line over a shaded
+prediction interval; every one is labelled; and a projection is withheld
+entirely, with its reason stated, when the fitted model does not justify one.
 
 ---
 
@@ -116,7 +130,8 @@ laptop to production. Copy [`.env.example`](.env.example) and fill it in.
 | `DATABASE_URL` | `sqlite:///backend/data/app.db` | SQLAlchemy URL. Use `postgresql+psycopg2://…` in production. |
 | `STORAGE_DIR` | `backend/data/uploads` | Where uploaded workbooks are written (mode `0600`, per-user subdirectories). |
 | `MAX_UPLOAD_MB` | `100` | Rejected above this size. |
-| `FILE_RETENTION_HOURS` | `72` | Uploads are deleted this long after a session was last touched. |
+| `FILE_RETENTION_HOURS` | `72` | Uploads are deleted this long after a session was last touched. The analysis survives. |
+| `RESULT_RETENTION_DAYS` | `0` | Analyses are deleted this long after a session was last touched. `0` keeps them indefinitely. |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | Comma-separated browser origins. |
 | `ALLOW_REGISTRATION` | `true` | Set `false` to close signups on a shared deployment. |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `720` | Token lifetime. |
@@ -145,10 +160,19 @@ createdb ai_data_analyst
 export DATABASE_URL="postgresql+psycopg2://analyst:password@localhost:5432/ai_data_analyst"
 ```
 
-Four tables: `users`, `analysis_sessions` (the analysis result is stored as
-JSON), `query_logs` (an audit trail of natural-language questions) and
-`shared_reports`. Alembic is included in `requirements.txt` for schema changes
-once you are past the first deployment.
+Five tables: `users`, `analysis_sessions` (the analysis result is stored as
+JSON), `query_logs` (an audit trail of natural-language questions),
+`insight_feedback` (per-user useful/not-useful ratings) and `shared_reports`.
+Alembic is included in `requirements.txt` for schema changes once you are past
+the first deployment.
+
+**Two retention windows.** `FILE_RETENTION_HOURS` removes the uploaded workbook —
+the raw rows, the most sensitive artefact — while the analysis survives so
+reports stay readable. `RESULT_RETENTION_DAYS` removes the analysis itself,
+which still holds aggregates, column names and sample values drawn from the
+upload. It defaults to `0` (keep indefinitely), because an upgrade should not
+start deleting a user's analyses unasked; set it to whatever your policy needs
+and the hourly sweep enforces both.
 
 ---
 
@@ -184,7 +208,7 @@ figure against the calculated results before it is used.
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-pytest                      # 193 tests, on SQLite or PostgreSQL
+pytest                      # 303 tests, on SQLite or PostgreSQL
 pytest tests/test_e2e.py    # the journey, plus verification against pandas
 pytest tests/test_security.py -v
 ```
@@ -193,7 +217,7 @@ pytest tests/test_security.py -v
 cd frontend
 npm run lint                # TypeScript, strict mode
 npm run build
-npm run e2e                 # 84 browser checks against the built bundle
+npm run e2e                 # 127 browser checks against the built bundle
 ```
 
 Three layers: engine and API tests, an end-to-end suite that recomputes every
@@ -230,7 +254,7 @@ environment's egress policy blocks the base-image registry CDN.
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module map, the pipeline stage by stage, the insight and evidence model, the AI safety layer, performance and extension points. |
 | [`docs/API.md`](docs/API.md) | Every endpoint with request and response shapes, error codes and a worked example. |
-| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | How to use each of the eight sections, and how to read a confidence level. |
+| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | How to use each of the ten sections, and how to read a confidence level. |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production deployment, scaling, backups, retention and the security checklist. |
 | [`docs/TESTING.md`](docs/TESTING.md) | What is covered, how to run it, and how to add a test. |
 
@@ -247,10 +271,10 @@ backend/
     services/     session lifecycle and background analysis
     samples/      generated sample datasets
     tasks/        the retention cleanup job
-  tests/          193 tests
+  tests/          303 tests
 frontend/
   src/
-    pages/        the eight workspace sections plus landing and sign-in
+    pages/        the ten workspace sections plus landing and sign-in
     components/   charts, insight cards, evidence panel, filters, drill-down
     context/      auth, theme and analysis state
     lib/          typed API client, formatting, types

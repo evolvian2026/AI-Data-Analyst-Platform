@@ -72,6 +72,13 @@ export function ChartFrame({ chart, children, table, compact = false }: Props) {
             {chart.question}
           </p>
         </div>
+        {chart.projection && (
+          <span className="chip shrink-0 border-line text-muted"
+            title={chart.projection.disclaimer}>
+            <span aria-hidden>┄</span>
+            includes a projection
+          </span>
+        )}
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
@@ -103,6 +110,17 @@ export function ChartFrame({ chart, children, table, compact = false }: Props) {
       {showWhy && (
         <div className="animate-fade-in border-b border-line bg-page px-4 py-3 text-xs text-subtle">
           <p>{chart.reason}</p>
+          {chart.projection && (
+            <div className="mt-2 rounded-lg border border-line px-2.5 py-2">
+              <p className="font-medium text-ink">
+                Projection: {chart.projection.method_label}
+              </p>
+              <p className="mt-1">{chart.projection.basis}</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {chart.projection.caveats.map((caveat) => <li key={caveat}>{caveat}</li>)}
+              </ul>
+            </div>
+          )}
           <p className="mt-1.5">
             <span className="font-medium text-ink">Calculation:</span>{' '}
             <span className="tnum">{chart.calculation}</span>
@@ -120,6 +138,16 @@ export function ChartFrame({ chart, children, table, compact = false }: Props) {
           children
         )}
       </div>
+
+      {chart.projection && !showTable && (
+        <p className="border-t border-line px-4 py-2 text-[11px] text-muted">
+          <span aria-hidden className="mr-1.5">┄</span>
+          Dashed line and shaded band: {chart.projection.horizon} {chart.projection.unit}(s)
+          projected after {chart.projection.starts_after}, with a{' '}
+          {chart.projection.interval_pct}% prediction interval.{' '}
+          <span className="text-subtle">Model output, not measured values.</span>
+        </p>
+      )}
 
       {chart.insight && !showTable && (
         <p className="border-t border-line px-4 py-2.5 text-xs text-subtle">{chart.insight}</p>

@@ -276,6 +276,23 @@ def read_workbook(
     return frames, infos, meta
 
 
+def combinable_sheets(frames: dict[str, pd.DataFrame]) -> list[str]:
+    """The sheets 'Analyze entire workbook' would actually stack together.
+
+    Sheets are grouped by their column set and the largest group wins. Reported
+    separately from :func:`combine_sheets` so a caller can say *which* sheets a
+    result covers - claiming a result spans the workbook when only one of its
+    sheets was usable would be a lie the user cannot see.
+    """
+    if len(frames) <= 1:
+        return list(frames)
+    signatures: dict[frozenset, list[str]] = {}
+    for name, df in frames.items():
+        signatures.setdefault(frozenset(df.columns), []).append(name)
+    best = max(signatures, key=lambda sig: sum(len(frames[n]) for n in signatures[sig]))
+    return signatures[best]
+
+
 def combine_sheets(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """Union sheets that share a schema, used by 'Analyze entire workbook'.
 
@@ -283,18 +300,7 @@ def combine_sheets(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
     ``__sheet__`` provenance column.  When schemas differ the largest sheet is
     returned unchanged - stacking unrelated tables would produce nonsense.
     """
-    if len(frames) == 1:
-        return next(iter(frames.values()))
-
-    signatures: dict[frozenset, list[str]] = {}
-    for name, df in frames.items():
-        signatures.setdefault(frozenset(df.columns), []).append(name)
-
-    best_signature = max(
-        signatures,
-        key=lambda sig: sum(len(frames[n]) for n in signatures[sig]),
-    )
-    names = signatures[best_signature]
+    names = combinable_sheets(frames)
     if len(names) == 1:
         return frames[names[0]]
 

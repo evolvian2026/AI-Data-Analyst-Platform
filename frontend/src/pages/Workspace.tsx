@@ -21,6 +21,18 @@ export function WorkspacePage() {
   const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
+  // Both retention windows are stated up front rather than discovered when
+  // something disappears.
+  const retentionNote = [
+    'Upload an Excel workbook to start a new analysis session, or reopen a previous one.',
+    config?.file_retention_hours
+      ? `Uploaded files are deleted ${config.file_retention_hours} hours after a session was last used; the analysis survives.`
+      : '',
+    config?.result_retention_days
+      ? `Analyses themselves are kept for ${config.result_retention_days} days.`
+      : '',
+  ].filter(Boolean).join(' ')
+
   const load = useCallback(async () => {
     try {
       const [list, sampleList] = await Promise.all([api.listSessions(), api.samples()])
@@ -78,7 +90,7 @@ export function WorkspacePage() {
     <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <SectionHeading
         title="Your datasets"
-        description="Upload an Excel workbook to start a new analysis session, or reopen a previous one."
+        description={retentionNote}
       />
 
       <div
@@ -147,6 +159,12 @@ export function WorkspacePage() {
                       ? ` · ${session.workbook_meta.total_rows.toLocaleString()} rows`
                       : ''}
                   </p>
+                  {session.result_expires_at && (
+                    <p className="tnum mt-0.5 text-xs text-muted">
+                      Kept until {formatDateTime(session.result_expires_at)} under the retention
+                      policy, then deleted.
+                    </p>
+                  )}
                 </button>
                 <span className={`text-xs font-medium capitalize ${STATUS_STYLE[session.status]}`}>
                   {session.status}

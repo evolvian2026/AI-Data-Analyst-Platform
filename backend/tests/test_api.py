@@ -275,7 +275,9 @@ def test_reanalyze_a_single_sheet(client, auth_headers, sales_workbook):
 
 def test_sample_datasets_can_be_loaded(client, auth_headers):
     samples = client.get("/api/samples").json()["samples"]
-    assert {s["key"] for s in samples} == {"sales", "students", "employees", "marketing", "finance"}
+    assert {s["key"] for s in samples} == {
+        "sales", "students", "employees", "marketing", "subscriptions", "finance",
+    }
 
     response = client.post("/api/samples/students/load", headers=auth_headers)
     assert response.status_code == 202

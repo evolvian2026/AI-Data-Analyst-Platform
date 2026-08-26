@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, LineChart,
-  Pie, PieChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis,
+  Pie, PieChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis,
+  YAxis, ZAxis,
 } from 'recharts'
 import type { Chart } from '../../lib/types'
 import { compact, formatValue } from '../../lib/format'
@@ -157,6 +158,7 @@ function renderBody({ chart, palette, format, seriesKeys, showLegend, handleClic
 function TimeSeries({ chart, palette, format, showLegend }: {
   chart: Chart; palette: Palette; format: (v: number | string | null) => string; showLegend: boolean
 }) {
+  if (chart.projection) return <ProjectedTimeSeries {...{ chart, palette, format }} />
   const Comp = chart.type === 'area' ? AreaChart : LineChart
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -198,6 +200,81 @@ function TimeSeries({ chart, palette, format, showLegend }: {
             activeDot={{ r: 4, strokeWidth: 2, stroke: palette.surface }} />
         )}
       </Comp>
+    </ResponsiveContainer>
+  )
+}
+
+/**
+ * A measured series with a projection attached.
+ *
+ * The projection is drawn as a *different mark*, not a continuation of the same
+ * one: a dashed line in a muted hue over a shaded prediction interval, starting
+ * at a labelled boundary. Nothing about it can be mistaken for a measurement at
+ * a glance, and the tooltip says "projected" on every projected period.
+ */
+function ProjectedTimeSeries({ chart, palette, format }: {
+  chart: Chart; palette: Palette; format: (v: number | string | null) => string
+}) {
+  const projection = chart.projection!
+  const measured = palette.series[0]
+  // Deliberately not a second categorical hue: a projection is the same
+  // quantity, less certain - so it keeps the hue and loses the solidity.
+  const projected = palette.muted
+
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={chart.data} margin={MARGIN}>
+        <defs>
+          <linearGradient id={`fill-${chart.id}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={measured} stopOpacity={0.28} />
+            <stop offset="100%" stopColor={measured} stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid vertical={false} stroke={palette.grid} />
+        <XAxis dataKey={chart.x_key} tick={AXIS_STYLE} tickLine={false}
+          axisLine={{ stroke: palette.axis }} minTickGap={24} />
+        <YAxis tick={AXIS_STYLE} tickLine={false} axisLine={false} width={56}
+          tickFormatter={(v) => compact(v as number, chart.currency_symbol)} />
+        <Tooltip
+          cursor={{ stroke: palette.axis, strokeWidth: 1 }}
+          content={({ active, payload, label }) => {
+            if (!active || !payload?.length) return null
+            const row = payload[0].payload as Record<string, number | null | boolean>
+            const isProjection = row?.is_projection === true
+            return (
+              <TooltipBox
+                title={isProjection ? `${label} · projected` : String(label)}
+                rows={isProjection
+                  ? [
+                    { label: 'Projected', value: format(row.projected as number), color: projected },
+                    { label: `${projection.interval_pct}% interval`,
+                      value: `${format(row.lower as number)} – ${format(row.upper as number)}` },
+                  ]
+                  : [
+                    { label: chart.series[0]?.label ?? 'Value',
+                      value: format(row.value as number), color: measured },
+                    ...(row.records != null
+                      ? [{ label: 'Records', value: String(row.records) }] : []),
+                  ]}
+              />
+            )
+          }}
+        />
+        <Legend {...legendProps(palette)} />
+        <ReferenceLine x={projection.starts_after} stroke={palette.axis} strokeDasharray="2 3"
+          label={{ value: 'projected →', position: 'insideTopRight',
+            fill: palette.muted, fontSize: 10 }} />
+        <Area isAnimationActive={false} dataKey={projection.interval_key} legendType="none"
+          stroke="none" fill={projected} fillOpacity={0.14} activeDot={false} />
+        <Area isAnimationActive={false} type="monotone" dataKey="value"
+          name={chart.series[0]?.label} stroke={measured} strokeWidth={2}
+          fill={`url(#fill-${chart.id})`} dot={false} connectNulls={false}
+          activeDot={{ r: 4, strokeWidth: 2, stroke: palette.surface }} />
+        <Line isAnimationActive={false} type="monotone" dataKey="projected"
+          name={`${projection.measure} (projected)`} stroke={projected} strokeWidth={2}
+          strokeDasharray="5 4" dot={false} connectNulls
+          activeDot={{ r: 4, strokeWidth: 2, stroke: palette.surface }} />
+      </ComposedChart>
     </ResponsiveContainer>
   )
 }

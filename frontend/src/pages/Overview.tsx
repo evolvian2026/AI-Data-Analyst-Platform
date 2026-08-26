@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAnalysis } from '../context/AnalysisContext'
 import { api } from '../lib/api'
 import { KpiCard } from '../components/KpiCard'
@@ -7,17 +7,22 @@ import { ChartRenderer } from '../components/charts/ChartRenderer'
 import { FilterBar } from '../components/FilterBar'
 import { InsightCard } from '../components/InsightCard'
 import { Card, ScoreRing, SectionHeading } from '../components/Primitives'
+import { ColumnClassificationPanel } from '../components/ColumnClassificationPanel'
+import { JoinPanel } from '../components/JoinPanel'
 import { ExecutiveBriefing } from '../components/ExecutiveBriefing'
 import { formatBytes, formatDateTime } from '../lib/format'
 
 export function OverviewPage() {
   const {
     sessionId, view, analysis, filters, setFilters, filtering, bookmarks, notes,
-    toggleBookmark, saveNote, reload,
+    toggleBookmark, saveNote,
   } = useAnalysis()
+  const navigate = useNavigate()
   const [showAllKpis, setShowAllKpis] = useState(false)
   const [switching, setSwitching] = useState(false)
   const [showBriefing, setShowBriefing] = useState(false)
+  const [showColumns, setShowColumns] = useState(false)
+  const [showJoin, setShowJoin] = useState(false)
 
   if (!view || !analysis) return null
 
@@ -66,7 +71,7 @@ export function OverviewPage() {
                   onClick={async () => {
                     setSwitching(true)
                     await api.reanalyze(sessionId, 'workbook')
-                    window.setTimeout(async () => { await reload(); setSwitching(false) }, 1500)
+                    navigate(`/app/${sessionId}/processing`)
                   }}
                   className={`chip ${analysis.scope === 'workbook' ? 'border-accent text-accent' : ''}`}>
                   Analyze entire workbook
@@ -76,7 +81,7 @@ export function OverviewPage() {
                     onClick={async () => {
                       setSwitching(true)
                       await api.reanalyze(sessionId, 'sheet', sheet.name)
-                      window.setTimeout(async () => { await reload(); setSwitching(false) }, 1500)
+                      navigate(`/app/${sessionId}/processing`)
                     }}
                     className={`chip ${analysis.active_sheet === sheet.name
                       ? 'border-accent text-accent' : ''}`}>
@@ -89,11 +94,29 @@ export function OverviewPage() {
             </div>
           )}
 
+          {analysis.join && (
+            <div className="mt-5 border-t border-line pt-4">
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">
+                Joined dataset
+              </p>
+              <p className="text-xs text-subtle">{analysis.join.narrative}</p>
+              {analysis.join.warnings.map((warning) => (
+                <p key={warning} className="mt-1 text-xs text-muted">! {warning}</p>
+              ))}
+            </div>
+          )}
+
           {analysis.relationships.length > 0 && (
             <div className="mt-5 border-t border-line pt-4">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">
-                Detected relationships between sheets
-              </p>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                  Detected relationships between sheets
+                </p>
+                <button type="button" className="btn-ghost text-xs"
+                  aria-expanded={showJoin} onClick={() => setShowJoin((open) => !open)}>
+                  {showJoin ? 'Hide' : 'Combine sheets'}
+                </button>
+              </div>
               <ul className="space-y-1 text-xs text-subtle">
                 {analysis.relationships.slice(0, 4).map((relationship) => (
                   <li key={`${relationship.left}-${relationship.right}-${relationship.key}`}>
@@ -103,8 +126,35 @@ export function OverviewPage() {
               </ul>
             </div>
           )}
+
+          <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+            <button type="button" className="btn-ghost text-xs" aria-expanded={showColumns}
+              onClick={() => setShowColumns((open) => !open)}>
+              {showColumns ? 'Hide column classifications' : 'Review how columns are read'}
+            </button>
+            {(analysis.profile.overrides_applied?.length ?? 0) > 0 && (
+              <span className="chip border-accent/40 text-accent">
+                {analysis.profile.overrides_applied?.length} column correction(s) applied
+              </span>
+            )}
+          </div>
         </Card>
       </section>
+
+      {showJoin && analysis.relationships.length > 0 && (
+        <section>
+          <JoinPanel sessionId={sessionId} relationships={analysis.relationships} />
+        </section>
+      )}
+
+      {showColumns && (
+        <section>
+          {/* Re-analysis takes as long as it takes, so hand over to the live
+              progress page rather than reloading after a guessed delay. */}
+          <ColumnClassificationPanel sessionId={sessionId}
+            onApplied={() => navigate(`/app/${sessionId}/processing`)} />
+        </section>
+      )}
 
       {/* --- KPIs --------------------------------------------------------- */}
       <section>

@@ -1,6 +1,8 @@
 import type {
-  Analysis, AskAnswer, Briefing, DataPage, DrilldownResult, Investigation,
-  SampleDataset, SessionSummary, Story, SystemConfig, User, ActiveFilter,
+  Analysis, AskAnswer, AskContext, Briefing, CleaningAudit, CleaningProposal,
+  ColumnClassification, ColumnOverride, ComparableSession, Comparison, DataPage,
+  DrilldownResult, FeedbackState, Forecast, Insight, Investigation, JoinReport,
+  Relationship, SampleDataset, SessionSummary, Story, SystemConfig, User, ActiveFilter,
 } from './types'
 
 const TOKEN_KEY = 'ai-analyst-token'
@@ -159,9 +161,10 @@ export const api = {
       method: 'POST', body: JSON.stringify({ dimension, value, filters }),
     }),
 
-  ask: (id: string, question: string, filters: ActiveFilter[] = []) =>
+  ask: (id: string, question: string, filters: ActiveFilter[] = [],
+        context: AskContext | null = null) =>
     request<AskAnswer>(`/sessions/${id}/ask`, {
-      method: 'POST', body: JSON.stringify({ question, filters }),
+      method: 'POST', body: JSON.stringify({ question, filters, context }),
     }),
 
   askSuggestions: (id: string) =>
@@ -184,6 +187,87 @@ export const api = {
     limit?: number; offset?: number; sort_by?: string | null; sort_desc?: boolean
     search?: string | null; columns?: string[] | null; filters?: ActiveFilter[]
   }) => request<DataPage>(`/sessions/${id}/data`, { method: 'POST', body: JSON.stringify(query) }),
+
+  // --- column classification -------------------------------------------------
+  columns: (id: string) => request<{
+    columns: ColumnClassification[]
+    overrides: Record<string, ColumnOverride>
+    note: string
+  }>(`/sessions/${id}/columns`),
+
+  setColumns: (id: string, overrides: Record<string, ColumnOverride>) =>
+    request<SessionSummary>(`/sessions/${id}/columns`, {
+      method: 'POST', body: JSON.stringify({ overrides, reanalyze: true }),
+    }),
+
+  // --- data quality fixes ----------------------------------------------------
+  qualityFixes: (id: string) => request<{
+    proposals: CleaningProposal[]
+    applied: CleaningProposal[]
+    audit: CleaningAudit | null
+    policy: string
+  }>(`/sessions/${id}/quality/fixes`),
+
+  previewQualityFixes: (id: string, fixes: CleaningProposal[]) =>
+    request<CleaningAudit>(`/sessions/${id}/quality/fixes/preview`, {
+      method: 'POST', body: JSON.stringify({ fixes }),
+    }),
+
+  applyQualityFixes: (id: string, fixes: CleaningProposal[]) =>
+    request<SessionSummary>(`/sessions/${id}/quality/fixes`, {
+      method: 'POST', body: JSON.stringify({ fixes, reanalyze: true }),
+    }),
+
+  // --- cross-sheet joins -----------------------------------------------------
+  joins: (id: string) => request<{
+    relationships: Relationship[]
+    sheets: string[]
+    current_join: JoinReport | null
+    note: string
+  }>(`/sessions/${id}/joins`),
+
+  previewJoin: (id: string, spec: {
+    left: string; right: string; key: string; how: string
+  }) => request<JoinReport>(`/sessions/${id}/joins/preview`, {
+    method: 'POST', body: JSON.stringify(spec),
+  }),
+
+  createJoin: (id: string, spec: {
+    left: string; right: string; key: string; how: string; name?: string
+  }) => request<SessionSummary>(`/sessions/${id}/joins`, {
+    method: 'POST', body: JSON.stringify(spec),
+  }),
+
+  // --- comparison ------------------------------------------------------------
+  comparable: (id: string) => request<{ comparable: ComparableSession[]; note: string }>(
+    `/sessions/${id}/comparable`,
+  ),
+
+  compare: (id: string, previousId: string) =>
+    request<Comparison>(`/sessions/${id}/compare/${previousId}`),
+
+  // --- feedback --------------------------------------------------------------
+  rateInsight: (id: string, insightId: string, vote: 'useful' | 'not_useful' | 'clear') =>
+    request<{ recorded: string; insight_id: string; feedback: FeedbackState; insights: Insight[] }>(
+      `/sessions/${id}/feedback`,
+      { method: 'POST', body: JSON.stringify({ insight_id: insightId, vote }) },
+    ),
+
+  feedback: (id: string) => request<FeedbackState & {
+    your_votes: Record<string, string>
+    history: { insight_id: string; session_id: string; vote: string; headline: string
+      type: string; created_at: string }[]
+    adjustments: { by_subject: Record<string, number>; by_type: Record<string, number> }
+  }>(`/sessions/${id}/feedback`),
+
+  // --- forecasts -------------------------------------------------------------
+  forecast: (id: string) => request<{
+    forecasts: Forecast[]
+    available: Forecast[]
+    unavailable: { measure: string; reason: string }[]
+    time_column: string | null
+    policy: string
+  }>(`/sessions/${id}/forecast`),
 
   // --- exports ---------------------------------------------------------------
   downloadPdf: (id: string, payload: Record<string, unknown>, name: string) =>

@@ -28,7 +28,7 @@ from app.engines import stats_engine
 from app.engines import story as story_engine
 from app.engines import trend as trend_engine
 from app.engines import visualization
-from app.engines.excel_parser import combine_sheets, read_workbook
+from app.engines.excel_parser import combinable_sheets, combine_sheets, read_workbook
 from app.engines.formatting import jsonify
 from app.engines.relationships import apply_join, detect_relationships
 
@@ -102,7 +102,9 @@ def prepare_frame(
     table is interpreted, not what the table is, and belong to profiling.
     """
     config = config or {}
-    context: dict[str, Any] = {"join": None, "cleaning": None, "attribute_columns": []}
+    context: dict[str, Any] = {
+        "join": None, "cleaning": None, "attribute_columns": [], "combined_sheets": [],
+    }
 
     join_spec = config.get("join") or None
     if join_spec:
@@ -125,8 +127,13 @@ def prepare_frame(
         )
     else:
         df = combine_sheets(frames)
-        context["active_sheet"] = "__workbook__" if len(frames) > 1 else next(iter(frames))
-        context["scope"] = "workbook" if len(frames) > 1 else "sheet"
+        # Only the sheets that share a schema are stacked. Reporting "the whole
+        # workbook" when one of three sheets was usable would overstate what the
+        # numbers cover.
+        combined = combinable_sheets(frames)
+        context["active_sheet"] = "__workbook__" if len(combined) > 1 else combined[0]
+        context["scope"] = "workbook" if len(combined) > 1 else "sheet"
+        context["combined_sheets"] = combined
 
     recipe = config.get("cleaning") or []
     if recipe:
@@ -165,6 +172,7 @@ def analyze_workbook(
     result["active_sheet"] = preparation["active_sheet"]
     result["scope"] = preparation["scope"]
     result["analyzable_sheets"] = list(frames)
+    result["combined_sheets"] = preparation.get("combined_sheets") or [preparation["active_sheet"]]
     result["join"] = preparation["join"]
     result["cleaning"] = preparation["cleaning"]
 

@@ -3,7 +3,7 @@ import {
 } from 'react'
 import { useParams } from 'react-router-dom'
 import { api, ApiError } from '../lib/api'
-import type { ActiveFilter, Analysis, SessionSummary } from '../lib/types'
+import type { ActiveFilter, Analysis, FeedbackVote, SessionSummary } from '../lib/types'
 
 interface AnalysisValue {
   sessionId: string
@@ -21,6 +21,8 @@ interface AnalysisValue {
   notes: Record<string, string>
   toggleBookmark: (id: string) => void
   saveNote: (id: string, note: string) => void
+  /** Rate a finding useful or not. Reorders the list; changes no value. */
+  rateInsight: (id: string, vote: FeedbackVote | 'clear') => Promise<void>
 }
 
 const AnalysisContext = createContext<AnalysisValue | null>(null)
@@ -105,11 +107,22 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
     })
   }, [persist])
 
+  const rateInsight = useCallback(async (id: string, vote: FeedbackVote | 'clear') => {
+    const response = await api.rateInsight(sessionId, id, vote)
+    // The server returns the whole re-ordered list, so the ranking a reader
+    // sees is always the one the server would serve on a reload.
+    setAnalysis((current) => (current
+      ? { ...current, insights: response.insights, top_insights: response.insights.slice(0, 5),
+          feedback: response.feedback }
+      : current))
+  }, [sessionId])
+
   const value = useMemo<AnalysisValue>(() => ({
     sessionId, session, analysis, view: filtered ?? analysis, filters, setFilters,
     filtering, loading, error, reload: load, bookmarks, notes, toggleBookmark, saveNote,
+    rateInsight,
   }), [sessionId, session, analysis, filtered, filters, setFilters, filtering, loading,
-    error, load, bookmarks, notes, toggleBookmark, saveNote])
+    error, load, bookmarks, notes, toggleBookmark, saveNote, rateInsight])
 
   return <AnalysisContext.Provider value={value}>{children}</AnalysisContext.Provider>
 }

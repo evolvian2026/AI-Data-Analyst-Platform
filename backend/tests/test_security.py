@@ -258,6 +258,29 @@ def test_narration_never_invents_a_number_when_a_model_misbehaves(monkeypatch):
     assert "412" in result["rejected"]
 
 
+
+def test_a_server_error_still_carries_its_cors_headers(client, monkeypatch):
+    """A 500 must not reach the browser disguised as a CORS failure.
+
+    The catch-all handler returns its response directly, so if the CORS
+    middleware ran inside it the response would carry no
+    Access-Control-Allow-Origin and the browser would report a CORS error for
+    what is really a server error - hiding the actual cause.
+    """
+    from app.api import routes_system
+
+    def _boom() -> dict[str, str]:
+        raise RuntimeError("something broke")
+
+    monkeypatch.setattr(routes_system, "provider_status", _boom)
+    origin = "http://localhost:5173"
+    response = client.get("/api/system/config", headers={"Origin": origin})
+
+    assert response.status_code == 500
+    assert response.headers.get("access-control-allow-origin") == origin
+    assert "request_id" in response.json()
+
+
 def test_security_headers_are_present(client):
     response = client.get("/api/system/health")
     assert response.headers["X-Content-Type-Options"] == "nosniff"

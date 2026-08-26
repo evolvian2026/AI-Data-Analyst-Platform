@@ -1,10 +1,13 @@
+import { useNavigate } from 'react-router-dom'
 import { useAnalysis } from '../context/AnalysisContext'
 import { Card, ScoreRing, SectionHeading, SeverityBadge } from '../components/Primitives'
+import { CleaningPanel } from '../components/CleaningPanel'
 import { titleCase } from '../lib/format'
 
 export function QualityPage() {
-  const { view } = useAnalysis()
-  if (!view) return null
+  const navigate = useNavigate()
+  const { sessionId, view, analysis } = useAnalysis()
+  if (!view || !analysis) return null
   const quality = view.quality
   const derived = view.derived_columns ?? []
 
@@ -37,6 +40,15 @@ export function QualityPage() {
           </div>
         </div>
       </Card>
+
+      {!view.filtered && (
+        <section>
+          <h2 className="mb-3 text-sm font-semibold text-ink">Fix what can be fixed</h2>
+          {/* Applying a fix re-runs the analysis; the progress page waits for it. */}
+          <CleaningPanel sessionId={sessionId} audit={analysis.cleaning}
+            onApplied={() => navigate(`/app/${sessionId}/processing`)} />
+        </section>
+      )}
 
       <section>
         <h2 className="mb-3 text-sm font-semibold text-ink">Dataset measurements</h2>

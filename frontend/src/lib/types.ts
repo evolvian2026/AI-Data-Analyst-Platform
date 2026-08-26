@@ -21,6 +21,8 @@ export interface SessionSummary {
   progress: Progress
   config: Record<string, unknown>
   file_deleted: boolean
+  /** When the retention policy will purge this analysis; null means never. */
+  result_expires_at: string | null
 }
 
 export interface WorkbookMeta {
@@ -90,6 +92,36 @@ export interface ColumnProfile {
   derived_from?: string
   confidence: number
   notes: string[]
+  overridden?: string[]
+  repeated_attribute?: boolean
+}
+
+export interface ColumnOptions {
+  roles: string[]
+  semantic_types: string[]
+  aggregations: string[]
+  blocked: string[]
+}
+
+export interface ColumnClassification {
+  name: string
+  semantic_type: string
+  role: string
+  aggregation: string | null
+  confidence: number
+  notes: string[]
+  sample_values: string[]
+  missing_pct: number
+  unique: number
+  overridden: string[]
+  repeated_attribute: boolean
+  options: ColumnOptions
+}
+
+export interface ColumnOverride {
+  role?: string
+  semantic_type?: string
+  aggregation?: string
 }
 
 export interface Profile {
@@ -101,6 +133,8 @@ export interface Profile {
   roles: Record<string, string[]>
   currency_symbol: string
   derived_columns?: DerivedColumn[]
+  overrides_applied?: string[]
+  attribute_columns?: string[]
 }
 
 export interface DerivedColumn {
@@ -184,7 +218,15 @@ export interface Insight {
   confidence: Confidence
   confidence_reason: string
   evidence: Evidence
-  priority: { score: number; components: Record<string, number> }
+  priority: {
+    score: number
+    components: Record<string, number>
+    score_before_feedback?: number
+    feedback_adjustment?: number
+    feedback_reason?: string
+  }
+  your_vote?: FeedbackVote | ''
+
   next_questions: string[]
   chart_hint: Record<string, unknown> | null
   chart_id: string | null
@@ -197,6 +239,25 @@ export interface ChartSeries {
   key: string
   label: string
   type?: string
+  /** A projected series is drawn dashed and never treated as measured. */
+  projected?: boolean
+  style?: string
+}
+
+/** Attached to a trend chart that carries a projection alongside its measurements. */
+export interface ChartProjection {
+  measure: string
+  method: string
+  method_label: string
+  horizon: number
+  unit: string
+  confidence: Confidence
+  interval_pct: number
+  interval_key: string
+  starts_after: string
+  basis: string
+  caveats: string[]
+  disclaimer: string
 }
 
 export interface Chart {
@@ -226,7 +287,51 @@ export interface Chart {
   column_values?: string[]
   row_label?: string
   column_label?: string
+  projection?: ChartProjection
 }
+
+export interface ForecastPoint {
+  label: string
+  iso: string
+  value: number
+  lower: number
+  upper: number
+  formatted: string
+  formatted_range: string
+  projected: true
+  step: number
+}
+
+export type Forecast =
+  | { available: false; measure: string; reason: string; time_column?: string | null }
+  | {
+      available: true
+      measure: string
+      time_column: string | null
+      aggregation: string
+      aggregation_label: string
+      method: string
+      method_label: string
+      unit: string
+      frequency: string
+      horizon: number
+      interval_pct: number
+      confidence: Confidence
+      measured_periods: number
+      last_measured_period: string
+      last_measured_value: number
+      r_squared: number | null
+      p_value: number | null
+      slope_per_period: number
+      seasonal: boolean
+      residual_std: number
+      volatility_pct: number
+      interval_width_pct_of_mean: number
+      points: ForecastPoint[]
+      basis: string
+      caveats: string[]
+      disclaimer: string
+    }
 
 export interface StoryCard {
   id: string
@@ -569,6 +674,215 @@ export interface ActiveFilter {
   to?: string
 }
 
+export interface CleaningProposal {
+  id: string
+  type: string
+  column: string
+  title: string
+  description: string
+  rationale: string
+  rows_affected: number
+  cells_affected: number
+  examples: { before: string; after: string }[]
+  params: Record<string, unknown>
+  risk: string
+  data_loss: boolean
+  quality_issue_id: string
+  accepted?: boolean
+}
+
+export interface CleaningStep {
+  id: string
+  type: string
+  column: string
+  title: string
+  applied: boolean
+  rows_changed: number
+  cells_changed: number
+  note: string
+}
+
+export interface CleaningAudit {
+  applied_count: number
+  skipped_count: number
+  rows_before: number
+  rows_after: number
+  rows_removed: number
+  cells_changed: number
+  steps: CleaningStep[]
+  statement: string
+}
+
+export interface JoinReport {
+  left: string
+  right: string
+  key: string
+  how: string
+  cardinality: string
+  rows_left: number
+  rows_right: number
+  matched_rows_left: number
+  matched_rows_right: number
+  unmatched_rows_left: number
+  unmatched_rows_right: number
+  shared_key_values: number
+  coverage_left_pct: number
+  coverage_right_pct: number
+  estimated_rows: number
+  rows_result?: number
+  columns_result?: number
+  fanout: number
+  overlapping_columns: string[]
+  duplicated_columns: string[]
+  warnings: string[]
+  safe: boolean
+  narrative: string
+}
+
+export type FeedbackVote = 'useful' | 'not_useful'
+
+export interface FeedbackState {
+  votes: { total: number; useful: number; not_useful: number }
+  max_adjustment: number
+  active: boolean
+  statement: string
+}
+
+export interface ComparableSession {
+  id: string
+  name: string
+  original_filename: string
+  created_at: string
+  rows: number
+  comparable_pct: number
+  identical_shape: boolean
+  same_file: boolean
+}
+
+export interface KpiMovement {
+  key: string
+  label: string
+  status: 'new' | 'removed' | 'changed' | 'incomparable'
+  value_before: number | null
+  value_after: number | null
+  formatted_before: string
+  formatted_after: string
+  delta: number | null
+  formatted_delta?: string
+  change_pct: number | null
+  direction: string
+  aggregation: string
+  is_primary: boolean
+  material: boolean
+  note: string
+}
+
+export interface GroupMovement {
+  group: string
+  status: 'new' | 'removed' | 'changed'
+  rank_before: number | null
+  rank_after: number | null
+  rank_delta?: number | null
+  value_before: number | null
+  value_after: number | null
+  formatted_before: string
+  formatted_after: string
+  share_before: number | null
+  share_after: number | null
+  share_delta: number | null
+  change_pct: number | null
+}
+
+export interface Comparison {
+  comparable_pct: number
+  previous_label: string
+  current_label: string
+  headline: string[]
+  schema: {
+    added: string[]
+    removed: string[]
+    reclassified: { column: string; changes: string[] }[]
+    identical: boolean
+  }
+  coverage: {
+    rows_before: number
+    rows_after: number
+    rows_delta: number
+    rows_change_pct: number | null
+    period_before: { from: string; to: string }
+    period_after: { from: string; to: string }
+    extends_period: boolean
+    time_column: string | null
+  }
+  quality: {
+    score_before: number | null
+    score_after: number | null
+    score_delta: number | null
+    grade_before: string
+    grade_after: string
+    direction: string
+    resolved: { id: string; title: string; severity: string }[]
+    introduced: { id: string; title: string; severity: string }[]
+    persisting: number
+  }
+  kpis: KpiMovement[]
+  segments: {
+    dimension: string
+    measure: string
+    aggregation_label: string
+    shares_valid: boolean
+    leader_before: string | null
+    leader_after: string | null
+    leader_changed: boolean
+    groups: GroupMovement[]
+    narrative: string
+  }[]
+  concentration: {
+    dimension: string
+    measure: string
+    top1_before: number
+    top1_after: number
+    top1_delta: number
+    top_group_before: string
+    top_group_after: string
+    risk_before: boolean
+    risk_after: boolean
+    became_risk: boolean
+    cleared_risk: boolean
+    direction: string
+  }[]
+  trends: {
+    measure: string
+    direction_before: string
+    direction_after: string
+    reversed: boolean
+    changed: boolean
+    confidence_after: string
+    narrative: string
+  }[]
+  insights: {
+    new: ComparedInsight[]
+    resolved: ComparedInsight[]
+    persisting: ComparedInsight[]
+    counts: { new: number; resolved: number; persisting: number }
+  }
+  caveats: string[]
+  method: string
+  previous: { id: string; name: string; created_at: string }
+  current: { id: string; name: string; created_at: string }
+}
+
+export interface ComparedInsight {
+  id: string
+  type: string
+  type_label: string
+  headline: string
+  confidence: Confidence
+  priority: number
+  priority_before?: number
+  headline_before?: string
+}
+
 export interface Relationship {
   left: string
   right: string
@@ -604,6 +918,7 @@ export interface Analysis {
     interpretations: { column: string; shape: string; skewness: number; gap_pct: number; narrative: string }[]
   }
   trends: Trend[]
+  forecasts: Forecast[]
   anomalies: Anomalies
   investigations: Investigation[]
   correlations: Correlations
@@ -625,6 +940,12 @@ export interface Analysis {
   scope: string
   analyzable_sheets: string[]
   relationships: Relationship[]
+  join: JoinReport | null
+  cleaning: CleaningAudit | null
+  cleaning_proposals: CleaningProposal[]
+  column_options: { column: string; roles: string[]; semantic_types: string[]
+    aggregations: string[]; blocked: string[] }[]
+  feedback?: FeedbackState
   progress: Progress
   session: {
     id: string
@@ -633,6 +954,7 @@ export interface Analysis {
     bookmarks: string[]
     config: Record<string, unknown>
     file_deleted: boolean
+    result_expires_at?: string | null
   }
   filtered?: boolean
   filter_summary?: {
@@ -657,9 +979,25 @@ export interface AskAnswer {
   suggestions?: string[]
   plan: Record<string, unknown>
   applied_filter: { column: string; value: string; records: number } | null
+  /** Echoed back with the next question so a follow-up resolves. */
+  context: AskContext
+  follow_up: boolean
+  inherited: string[]
+  interpretation: string
   insight_ids?: string[]
   anomaly_id?: string
   next_questions?: string[]
+}
+
+export interface AskContext {
+  intent: string
+  measure: string | null
+  dimension: string | null
+  second_measure: string | null
+  aggregation: string
+  limit: number
+  filter: { column: string; value: string; records: number } | null
+  question: string
 }
 
 export interface DrilldownResult {
@@ -718,6 +1056,7 @@ export interface SystemConfig {
   max_charts: number
   max_primary_kpis: number
   file_retention_hours: number
+  result_retention_days: number
   allow_registration: boolean
   accepted_formats: string[]
   pipeline_stages: { key: string; label: string }[]

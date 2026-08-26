@@ -54,16 +54,6 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
-    expose_headers=["Content-Disposition", "X-Request-ID"],
-)
-
-
 @app.middleware("http")
 async def request_context(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -87,6 +77,22 @@ async def request_context(request: Request, call_next):
     if duration > 3000:
         logger.info("slow request %s %s %.0fms", request.method, request.url.path, duration)
     return response
+
+
+# Registered *after* the handler above so it ends up outermost: Starlette runs
+# the most recently added middleware first. That ordering matters more than it
+# looks - the catch-all above returns its 500 directly, and if CORS ran inside
+# it that response would carry no Access-Control-Allow-Origin. The browser would
+# then report a CORS failure for what is really a server error, hiding the
+# actual cause from whoever has to debug it.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["Content-Disposition", "X-Request-ID"],
+)
 
 
 @app.exception_handler(RequestValidationError)
