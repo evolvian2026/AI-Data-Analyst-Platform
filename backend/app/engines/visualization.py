@@ -715,6 +715,71 @@ def _ratio_by_dimension(df: pd.DataFrame, profile: dict[str, Any], measures: lis
     )
 
 
+def attach_projections(charts: list[dict[str, Any]],
+                       forecasts: list[dict[str, Any]]) -> None:
+    """Draw a projection onto its measured trend chart, as a separate series.
+
+    The projection is deliberately *not* merged into the measured series. Every
+    projected period is a row whose ``value`` is null and whose ``projected``
+    key holds the model output, so a reader, an export and a chart library all
+    see two different things. One bridging row repeats the last measured value
+    in both keys purely so the dashed line starts where the solid one ends; it
+    is flagged ``bridge`` so no marker is drawn on it and no total counts it.
+    """
+    by_measure = {
+        f["measure"]: f for f in forecasts
+        if f.get("available") and f.get("points")
+    }
+    if not by_measure:
+        return
+    for chart in charts:
+        drilldown = chart.get("drilldown") or {}
+        if drilldown.get("type") != "period" or chart["type"] not in {LINE, AREA}:
+            continue
+        forecast = by_measure.get(drilldown.get("measure"))
+        if not forecast or not chart["data"]:
+            continue
+
+        last = chart["data"][-1]
+        last["projected"] = last.get("value")
+        last["interval"] = [last.get("value"), last.get("value")]
+        last["bridge"] = True
+        for point in forecast["points"]:
+            chart["data"].append({
+                "name": point["label"],
+                "value": None,
+                "projected": point["value"],
+                "lower": point["lower"],
+                "upper": point["upper"],
+                "interval": [point["lower"], point["upper"]],
+                "is_projection": True,
+            })
+        chart["series"] = chart["series"] + [{
+            "key": "projected",
+            "label": f"{drilldown['measure']} (projected)",
+            "projected": True,
+            "style": "dashed",
+        }]
+        chart["projection"] = {
+            "measure": forecast["measure"],
+            "method": forecast["method"],
+            "method_label": forecast["method_label"],
+            "horizon": forecast["horizon"],
+            "unit": forecast["unit"],
+            "confidence": forecast["confidence"],
+            "interval_pct": forecast["interval_pct"],
+            "interval_key": "interval",
+            "starts_after": forecast["last_measured_period"],
+            "basis": forecast["basis"],
+            "caveats": forecast["caveats"],
+            "disclaimer": forecast["disclaimer"],
+        }
+        chart["insight"] = (
+            f"{chart.get('insight', '')} Projected {forecast['horizon']} {forecast['unit']}(s) "
+            f"ahead - model output, not measured values."
+        ).strip()
+
+
 def attach_charts_to_insights(insights: list[dict[str, Any]],
                               charts: list[dict[str, Any]]) -> None:
     """Link every insight to the chart that best evidences it."""

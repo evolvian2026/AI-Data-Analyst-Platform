@@ -502,3 +502,194 @@ def primary_time_column(profile: dict[str, Any]) -> str | None:
     if not candidates:
         return None
     return max(candidates)[1]
+
+
+# --- user corrections -------------------------------------------------------
+
+OVERRIDABLE_ROLES = {MEASURE, DIMENSION, TIME_DIMENSION, IDENTIFIER_ROLE, DESCRIPTIVE}
+OVERRIDABLE_TYPES = {
+    INTEGER, DECIMAL, CURRENCY, PERCENTAGE, DATE, DATETIME, CATEGORICAL, TEXT, BOOLEAN,
+    IDENTIFIER, GEOGRAPHIC,
+}
+AGGREGATIONS = {"sum", "mean"}
+
+
+def override_options(column: dict[str, Any], series: pd.Series | None = None) -> dict[str, Any]:
+    """Which corrections are legitimate for one column, and which are not.
+
+    Profiling is inference, and inference is sometimes wrong - but a text column
+    cannot become a measure by being relabelled. The options offered here are
+    the ones the *data* can actually support, so an override can never put the
+    analytics engine in a state it cannot compute.
+    """
+    numeric_capable = bool(column.get("numeric_stats")) or (
+        series is not None and to_numeric_series(series).notna().any()
+    )
+    temporal_capable = bool(column.get("temporal_stats")) or (
+        series is not None and column["semantic_type"] not in NUMERIC_TYPES
+        and to_datetime_series(series).notna().any()
+    )
+
+    roles = [DIMENSION, IDENTIFIER_ROLE, DESCRIPTIVE]
+    if numeric_capable:
+        roles.append(MEASURE)
+    if temporal_capable:
+        roles.append(TIME_DIMENSION)
+
+    types = [CATEGORICAL, TEXT, IDENTIFIER, GEOGRAPHIC, BOOLEAN]
+    if numeric_capable:
+        types.extend([INTEGER, DECIMAL, CURRENCY, PERCENTAGE])
+    if temporal_capable:
+        types.extend([DATE, DATETIME])
+
+    blocked = []
+    if not numeric_capable:
+        blocked.append(
+            f"{column['name']} holds no values that can be read as numbers, so it cannot be "
+            f"analysed as a measure."
+        )
+    if not temporal_capable:
+        blocked.append(
+            f"{column['name']} holds no values that can be read as dates, so it cannot be used "
+            f"as the time axis."
+        )
+    return {
+        "column": column["name"],
+        "current": {
+            "role": column["role"], "semantic_type": column["semantic_type"],
+            "aggregation": column.get("aggregation"),
+        },
+        "roles": sorted(set(roles)),
+        "semantic_types": sorted(set(types)),
+        "aggregations": sorted(AGGREGATIONS) if MEASURE in roles else [],
+        "blocked": blocked,
+        "reason": (
+            f"Detected as {column['semantic_type']} with "
+            f"{column.get('confidence', 0) * 100:.0f}% confidence"
+            if isinstance(column.get("confidence"), float) else ""
+        ),
+    }
+
+
+def validate_overrides(
+    overrides: dict[str, dict[str, Any]], profile: dict[str, Any],
+    df: pd.DataFrame | None = None,
+) -> list[str]:
+    """Reject corrections the data cannot support, with a reason for each."""
+    errors: list[str] = []
+    columns = {c["name"]: c for c in profile["columns"]}
+    for name, override in overrides.items():
+        column = columns.get(name)
+        if column is None:
+            errors.append(f"'{name}' is not a column in this dataset.")
+            continue
+        if not isinstance(override, dict):
+            errors.append(f"{name}: the correction must be an object.")
+            continue
+        options = override_options(column, df[name] if df is not None and name in df else None)
+        role = override.get("role")
+        if role is not None:
+            if role not in OVERRIDABLE_ROLES:
+                errors.append(f"{name}: '{role}' is not a role.")
+            elif role not in options["roles"]:
+                errors.append(
+                    f"{name}: cannot be used as a {role} - "
+                    + (options["blocked"][0] if options["blocked"] else "the values do not support it.")
+                )
+        semantic_type = override.get("semantic_type")
+        if semantic_type is not None and semantic_type not in options["semantic_types"]:
+            errors.append(f"{name}: '{semantic_type}' is not a valid type for these values.")
+        aggregation = override.get("aggregation")
+        if aggregation is not None and aggregation not in AGGREGATIONS:
+            errors.append(f"{name}: aggregation must be one of {', '.join(sorted(AGGREGATIONS))}.")
+    return errors
+
+
+def apply_overrides(
+    profile: dict[str, Any], overrides: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Fold user corrections into a profile, in place, and rebuild the role index.
+
+    Applied immediately after profiling and before any engine reads the profile,
+    so a correction propagates through KPI selection, aggregation, charting and
+    narration without any of them needing to know overrides exist.
+    """
+    if not overrides:
+        return profile
+    changed = False
+    for column in profile["columns"]:
+        override = overrides.get(column["name"])
+        if not isinstance(override, dict):
+            continue
+        applied: list[str] = []
+        if override.get("semantic_type") and override["semantic_type"] != column["semantic_type"]:
+            column["semantic_type"] = override["semantic_type"]
+            applied.append("type")
+        if override.get("role") and override["role"] != column["role"]:
+            column["role"] = override["role"]
+            applied.append("role")
+        if column["role"] == MEASURE:
+            aggregation = override.get("aggregation") or column.get("aggregation") or \
+                default_aggregation(column["name"], column["semantic_type"])
+            if aggregation != column.get("aggregation"):
+                applied.append("aggregation")
+            column["aggregation"] = aggregation
+            column["additive"] = aggregation == "sum"
+        else:
+            column["aggregation"] = None
+            column["additive"] = False
+        if applied:
+            changed = True
+            column["overridden"] = applied
+            column["confidence"] = 1.0
+            column["notes"] = [
+                n for n in column.get("notes", [])
+                if "Averaged rather than summed" not in n
+            ] + [f"Classification corrected by a user ({', '.join(applied)})."]
+            if column["role"] == MEASURE and not column["additive"]:
+                column["notes"].append(
+                    "Averaged rather than summed: totalling this column would not be meaningful."
+                )
+
+    if changed:
+        roles: dict[str, list[str]] = {
+            MEASURE: [], DIMENSION: [], TIME_DIMENSION: [], IDENTIFIER_ROLE: [], DESCRIPTIVE: [],
+        }
+        for column in profile["columns"]:
+            roles.setdefault(column["role"], []).append(column["name"])
+        profile["roles"] = roles
+        profile["overrides_applied"] = sorted(
+            c["name"] for c in profile["columns"] if c.get("overridden")
+        )
+    return profile
+
+
+def mark_attribute_columns(
+    profile: dict[str, Any], names: list[str] | None,
+) -> set[str]:
+    """Flag columns whose values are repeated across rows by a join.
+
+    Totalling a customer's credit limit over their orders measures how many
+    orders they placed. Such columns stay measures - an *average* credit limit
+    by country is a real statistic - but they are never summed, and the caller
+    keeps them out of anything time-based.
+    """
+    if not names:
+        return set()
+    flagged = set(names)
+    present: set[str] = set()
+    for column in profile["columns"]:
+        if column["name"] not in flagged:
+            continue
+        present.add(column["name"])
+        column["repeated_attribute"] = True
+        if column["role"] == MEASURE and not column.get("overridden"):
+            column["aggregation"] = "mean"
+            column["additive"] = False
+            column["notes"] = list(column.get("notes", [])) + [
+                "Joined from a lookup table, so this value repeats on every matching row. "
+                "It is averaged rather than summed and excluded from trends: a total would "
+                "measure how often the record appears, not the value itself."
+            ]
+    profile["attribute_columns"] = sorted(present)
+    return present

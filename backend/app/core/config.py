@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # Uploaded workbooks are transient processing artefacts: they are removed
     # this many hours after the last time their session was touched.
     file_retention_hours: int = 72
+    # How long a completed *analysis* is kept. The result contains aggregates,
+    # column names and sample values drawn from the upload, so a deployment with
+    # a data-handling policy needs a bound on it as well as on the file.
+    # 0 keeps analyses indefinitely, which is the historical behaviour and the
+    # only default that cannot delete data an operator did not expect to lose.
+    result_retention_days: int = 0
 
     # Background processing. Analysis runs in an in-process worker pool by
     # default; set this to move the queue to Celery/Redis for horizontal scale.

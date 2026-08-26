@@ -15,8 +15,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.security import file_fingerprint
-from app.engines.excel_parser import WorkbookError, combine_sheets, read_workbook
-from app.engines.orchestrator import Progress, analyze_workbook
+from app.engines.excel_parser import WorkbookError, read_workbook
+from app.engines.relationships import JoinError
+from app.engines.orchestrator import Progress, analyze_workbook, prepare_frame
 from app.engines.sanitize import safe_filename
 from app.models import AnalysisSession
 
@@ -113,8 +114,9 @@ def run_analysis(session_id: str, sheet: str | None = None) -> None:
 
         content = path.read_bytes()
         progress = Progress(callback=lambda snapshot: _set_progress(session_id, snapshot))
-        result = analyze_workbook(content, original_filename, sheet=sheet, progress=progress)
-    except WorkbookError as exc:
+        result = analyze_workbook(content, original_filename, sheet=sheet, progress=progress,
+                                  config=existing_config)
+    except (WorkbookError, JoinError, ValueError) as exc:
         _fail(session_id, str(exc))
         return
     except MemoryError:
@@ -194,17 +196,45 @@ def load_dataframe(session: AnalysisSession) -> pd.DataFrame:
         )
     frames, _, _ = read_workbook(path.read_bytes(), session.original_filename,
                                  max_rows=settings.max_rows_analyzed)
-    configured_sheet = (session.config or {}).get("sheet")
-    if configured_sheet and configured_sheet in frames:
-        frame = frames[configured_sheet]
-    else:
-        frame = combine_sheets(frames)
+    config = session.config or {}
+    # The same join and cleaning steps the analysis ran, so exploring rows and
+    # filtering can never operate on a different table from the reported numbers.
+    frame, _ = prepare_frame(frames, config.get("sheet"), config)
 
     with _cache_lock:
         if len(_frame_cache) >= CACHE_LIMIT:
             oldest = min(_frame_cache, key=lambda key: _frame_cache[key][1])
             _frame_cache.pop(oldest, None)
         _frame_cache[session.id] = (frame, datetime.now(timezone.utc).timestamp())
+    return frame
+
+
+def load_sheets(session: AnalysisSession) -> dict[str, pd.DataFrame]:
+    """Every analysable sheet of the workbook, unmodified.
+
+    Used by the join endpoints, which need the sheets separately rather than the
+    single prepared table the analysis works on.
+    """
+    path = Path(session.storage_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            "The uploaded file has been removed by the retention policy. Upload it again to "
+            "continue exploring this dataset."
+        )
+    frames, _, _ = read_workbook(path.read_bytes(), session.original_filename,
+                                 max_rows=settings.max_rows_analyzed)
+    return frames
+
+
+def load_raw_frame(session: AnalysisSession) -> pd.DataFrame:
+    """The analysed table *before* any accepted cleaning recipe.
+
+    Previewing a fix has to run against uncleaned data, otherwise a fix that is
+    already applied looks like it would change nothing.
+    """
+    config = dict(session.config or {})
+    config.pop("cleaning", None)
+    frame, _ = prepare_frame(load_sheets(session), config.get("sheet"), config)
     return frame
 
 
@@ -221,6 +251,60 @@ def delete_session_file(session: AnalysisSession) -> None:
     except OSError:  # noqa: PERF203 - best effort cleanup
         logger.warning("could not delete file for session %s", session.id)
     invalidate_cache(session.id)
+
+
+def result_expires_at(session: AnalysisSession, retention_days: int | None = None) -> datetime | None:
+    """When this analysis will be purged, or None if results are kept forever."""
+    retention = (
+        retention_days if retention_days is not None else settings.result_retention_days
+    )
+    if retention <= 0:
+        return None
+    updated = session.updated_at
+    if updated is None:
+        return None
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+    return updated + timedelta(days=retention)
+
+
+def purge_expired_results(retention_days: int | None = None) -> int:
+    """Delete analyses past the result-retention window.
+
+    The file sweep removes the upload but leaves the analysis, which holds
+    aggregates, column names and sample values taken from it. A deployment with
+    a data-handling policy needs a bound on that too, so this deletes the whole
+    session row - result, notes, query log and share links cascade with it.
+
+    A retention of 0 disables the sweep, which is the default: deleting a user's
+    analyses is not something an upgrade should start doing unasked.
+    """
+    retention = (
+        retention_days if retention_days is not None else settings.result_retention_days
+    )
+    if retention <= 0:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention)
+    removed = 0
+    db = SessionLocal()
+    try:
+        for session in db.query(AnalysisSession).all():
+            updated = session.updated_at
+            if updated is None:
+                continue
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            if updated > cutoff:
+                continue
+            delete_session_file(session)
+            db.delete(session)
+            removed += 1
+        db.commit()
+    finally:
+        db.close()
+    if removed:
+        logger.info("result retention sweep removed %s analysis session(s)", removed)
+    return removed
 
 
 def cleanup_expired_files(retention_hours: int | None = None) -> int:

@@ -13,8 +13,10 @@ import pandas as pd
 
 from app.core.config import settings
 from app.engines import anomaly as anomaly_engine
+from app.engines import cleaning as cleaning_engine
 from app.engines import correlation as correlation_engine
 from app.engines import derived as derived_engine
+from app.engines import forecast as forecast_engine
 from app.engines import insights as insight_engine
 from app.engines import kpi as kpi_engine
 from app.engines import narrative
@@ -28,7 +30,7 @@ from app.engines import trend as trend_engine
 from app.engines import visualization
 from app.engines.excel_parser import combine_sheets, read_workbook
 from app.engines.formatting import jsonify
-from app.engines.relationships import detect_relationships
+from app.engines.relationships import apply_join, detect_relationships
 
 STAGES = [
     ("uploaded", "File uploaded"),
@@ -80,26 +82,42 @@ class Progress:
         }
 
 
-def analyze_workbook(
-    content: bytes,
-    filename: str,
+def prepare_frame(
+    frames: dict[str, pd.DataFrame],
     sheet: str | None = None,
-    progress: Progress | None = None,
-    max_rows: int | None = None,
-) -> dict[str, Any]:
-    """Full pipeline: bytes in, complete analysis result out."""
-    progress = progress or Progress()
-    progress.complete("uploaded")
+    config: dict[str, Any] | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Turn the sheets of a workbook into the one table that will be analysed.
 
-    frames, sheet_infos, meta = read_workbook(
-        content, filename, max_rows=max_rows or settings.max_rows_analyzed
-    )
-    progress.complete("workbook_read")
+    Three optional, user-controlled steps sit between the raw sheets and the
+    analysis, and they live here - in one function used by both the analysis
+    worker and the interactive endpoints - so that exploring rows can never
+    show a different table from the one the numbers were calculated on.
 
-    if sheet and sheet in frames:
+    1. a cross-sheet **join**, when the user has acted on a detected relationship;
+    2. otherwise, sheet selection or the union of compatible sheets;
+    3. an accepted **cleaning recipe**, replayed onto a copy of the result.
+
+    Column classification overrides are *not* applied here: they change how the
+    table is interpreted, not what the table is, and belong to profiling.
+    """
+    config = config or {}
+    context: dict[str, Any] = {"join": None, "cleaning": None, "attribute_columns": []}
+
+    join_spec = config.get("join") or None
+    if join_spec:
+        df, report = apply_join(
+            frames, join_spec["left"], join_spec["right"], join_spec["key"],
+            join_spec.get("how", "inner"), max_rows=settings.max_rows_analyzed,
+        )
+        context["join"] = report
+        context["attribute_columns"] = report.get("duplicated_columns", [])
+        context["active_sheet"] = f"{join_spec['left']} + {join_spec['right']}"
+        context["scope"] = "join"
+    elif sheet and sheet in frames:
         df = frames[sheet]
-        active_sheet = sheet
-        scope = "sheet"
+        context["active_sheet"] = sheet
+        context["scope"] = "sheet"
     elif sheet and sheet not in frames:
         raise ValueError(
             f"Sheet '{sheet}' is not available for analysis. "
@@ -107,15 +125,48 @@ def analyze_workbook(
         )
     else:
         df = combine_sheets(frames)
-        active_sheet = "__workbook__" if len(frames) > 1 else next(iter(frames))
-        scope = "workbook" if len(frames) > 1 else "sheet"
+        context["active_sheet"] = "__workbook__" if len(frames) > 1 else next(iter(frames))
+        context["scope"] = "workbook" if len(frames) > 1 else "sheet"
 
-    result = analyze_dataframe(df, meta, progress=progress)
+    recipe = config.get("cleaning") or []
+    if recipe:
+        rows_before = int(len(df))
+        df, audit = cleaning_engine.apply_recipe(df, recipe)
+        context["cleaning"] = cleaning_engine.summarize(audit, rows_before, int(len(df)))
+    return df, context
+
+
+def analyze_workbook(
+    content: bytes,
+    filename: str,
+    sheet: str | None = None,
+    progress: Progress | None = None,
+    max_rows: int | None = None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Full pipeline: bytes in, complete analysis result out."""
+    progress = progress or Progress()
+    config = config or {}
+    progress.complete("uploaded")
+
+    frames, sheet_infos, meta = read_workbook(
+        content, filename, max_rows=max_rows or settings.max_rows_analyzed
+    )
+    progress.complete("workbook_read")
+
+    df, preparation = prepare_frame(frames, sheet, config)
+
+    result = analyze_dataframe(
+        df, meta, progress=progress, overrides=config.get("column_overrides"),
+        attribute_columns=preparation.get("attribute_columns"),
+    )
     result["meta"] = meta
     result["sheets"] = [info.to_dict() for info in sheet_infos]
-    result["active_sheet"] = active_sheet
-    result["scope"] = scope
+    result["active_sheet"] = preparation["active_sheet"]
+    result["scope"] = preparation["scope"]
     result["analyzable_sheets"] = list(frames)
+    result["join"] = preparation["join"]
+    result["cleaning"] = preparation["cleaning"]
 
     if len(frames) > 1:
         profiles = {name: P.profile_dataframe(frame, settings.sample_rows_for_profiling)
@@ -133,14 +184,26 @@ def analyze_dataframe(
     df: pd.DataFrame,
     meta: dict[str, Any] | None = None,
     progress: Progress | None = None,
+    overrides: dict[str, dict[str, Any]] | None = None,
+    attribute_columns: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Analyse a single prepared table."""
+    """Analyse a single prepared table.
+
+    ``attribute_columns`` names columns whose values are repeated across rows -
+    the lookup side of a many-to-one join. They describe an entity rather than
+    an event, so they are never summed and never trended.
+    """
     progress = progress or Progress()
     meta = meta or {}
 
     # --- understand ---------------------------------------------------------
     profile = P.profile_dataframe(df, settings.sample_rows_for_profiling)
     profile.pop("profiles", None)
+    # User corrections are folded in before anything reads the profile, so every
+    # downstream engine sees the corrected roles and aggregations as if they had
+    # been inferred that way.
+    P.apply_overrides(profile, overrides)
+    attribute_columns = P.mark_attribute_columns(profile, attribute_columns)
     time_column = P.primary_time_column(profile)
     measures = profile["roles"][P.MEASURE]
     dimensions = profile["roles"][P.DIMENSION]
@@ -169,13 +232,19 @@ def analyze_dataframe(
 
     # --- trends -------------------------------------------------------------
     ranked_measures = _rank_measures(measures, kpis)
-    trends = trend_engine.analyze_trends(df, profile, time_column, ranked_measures)
+    # A time series of a repeated attribute tracks which entities appear in each
+    # period, not any change in the attribute, so those columns never enter it.
+    trendable = [m for m in ranked_measures if m not in attribute_columns]
+    trends = trend_engine.analyze_trends(df, profile, time_column, trendable)
+    # A projection is derived from the measured series and kept beside it, never
+    # inside it: nothing that sums or averages ``trends`` can pick up a forecast.
+    forecasts = forecast_engine.forecast_trends(trends, profile)
     progress.complete("trends_detected")
 
     # --- anomalies ----------------------------------------------------------
     record_anomalies = anomaly_engine.detect_record_outliers(df, profile)
     timeseries_anomalies = anomaly_engine.detect_timeseries_anomalies(
-        df, profile, time_column, ranked_measures
+        df, profile, time_column, trendable
     )
     anomalies = anomaly_engine.summarize_anomalies(
         record_anomalies, timeseries_anomalies, profile["row_count"]
@@ -215,6 +284,7 @@ def analyze_dataframe(
         "quality": quality,
         "kpis": kpis,
         "trends": trends,
+        "forecasts": forecasts,
         "anomalies": anomalies,
         "investigations": investigations,
         "correlations": correlations,
@@ -230,6 +300,7 @@ def analyze_dataframe(
 
     # --- charts -------------------------------------------------------------
     charts = visualization.build_charts(df, context, settings.max_charts)
+    visualization.attach_projections(charts, forecasts)
     visualization.attach_charts_to_insights(discovered, charts)
     context["charts"] = charts
     progress.complete("charts_generated")
@@ -267,6 +338,7 @@ def analyze_dataframe(
         "statistics": statistics,
         "distributions": distributions,
         "trends": trends,
+        "forecasts": forecasts,
         "anomalies": anomalies,
         "investigations": investigations,
         "correlations": correlations,
@@ -282,6 +354,11 @@ def analyze_dataframe(
         "filters": filters,
         "next_questions": story_engine.next_questions(context),
         "audiences": narrative.AUDIENCES,
+        "column_options": [
+            P.override_options(column, df[column["name"]] if column["name"] in df else None)
+            for column in profile["columns"]
+        ],
+        "cleaning_proposals": cleaning_engine.propose_fixes(df, profile, quality),
     }
 
 

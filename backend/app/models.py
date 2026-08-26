@@ -85,6 +85,32 @@ class QueryLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class InsightFeedback(Base):
+    """A user's "useful" / "not useful" verdict on one finding.
+
+    Keyed on the *signature* of a finding (what it is about) as well as its id,
+    so a rating survives a re-analysis that renumbers insights and can inform
+    the ranking of a later dataset with the same shape.
+    """
+
+    __tablename__ = "insight_feedback"
+    __table_args__ = (UniqueConstraint("user_id", "session_id", "insight_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_sessions.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    insight_id: Mapped[str] = mapped_column(String(32), default="")
+    signature: Mapped[str] = mapped_column(String(400), index=True, default="")
+    insight_type: Mapped[str] = mapped_column(String(40), default="")
+    headline: Mapped[str] = mapped_column(Text, default="")
+    vote: Mapped[str] = mapped_column(String(16), default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class SharedReport(Base):
     __tablename__ = "shared_reports"
     __table_args__ = (UniqueConstraint("token"),)

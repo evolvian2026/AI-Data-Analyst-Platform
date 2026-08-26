@@ -104,6 +104,43 @@ class QueryPlan:
     aggregation: str = "sum"
     matched_terms: list[str] = None
     confidence: str = "medium"
+    follow_up: bool = False
+    inherited: list[str] = None
+
+
+# --- conversational follow-up ----------------------------------------------
+# A follow-up is a question that only makes sense after the previous one:
+# "and last year?", "what about the North region?", "same for units". Rather
+# than guess, the engine carries the previous *plan* forward and states in the
+# answer exactly what it inherited, so a wrong assumption is visible rather
+# than silent.
+_FOLLOWUP_OPENERS = re.compile(
+    r"^\s*(and|but|also|ok(ay)?[,\s]|now|then|what about|how about|what if|same (for|with)?|"
+    r"just|only|excluding|including|instead)\b",
+    re.IGNORECASE,
+)
+_ANAPHORA = re.compile(
+    r"\b(it|its|that|those|these|them|they|this one|the same|there|he|she|his|her|their)\b",
+    re.IGNORECASE,
+)
+_SELF_CONTAINED = re.compile(
+    r"\b(show|list|what is|what are|which|how many|how much|give me|tell me)\b", re.IGNORECASE
+)
+
+
+def is_follow_up(question: str, context: dict[str, Any] | None) -> bool:
+    """Decide whether a question continues the previous one."""
+    if not context or not context.get("intent"):
+        return False
+    text = question.strip()
+    if _FOLLOWUP_OPENERS.search(text):
+        return True
+    if _ANAPHORA.search(text) and not _SELF_CONTAINED.search(text):
+        return True
+    # A fragment - two or three words with no verb - is almost always a
+    # continuation ("by region", "2024 only", "top 5").
+    words = re.findall(r"[A-Za-z0-9%]+", text)
+    return len(words) <= 4 and not _SELF_CONTAINED.search(text)
 
 
 def _tokens(question: str) -> list[str]:
@@ -174,7 +211,8 @@ def _match_dimension_value(question: str, df: pd.DataFrame,
 
 
 def build_plan(question: str, df: pd.DataFrame, profile: dict[str, Any],
-               time_column: str | None, ranked_measures: list[str] | None = None) -> QueryPlan:
+               time_column: str | None, ranked_measures: list[str] | None = None,
+               context: dict[str, Any] | None = None) -> QueryPlan:
     measures = ranked_measures or [c["name"] for c in profile["columns"] if c["role"] == P.MEASURE]
     measures = [m for m in measures if m in df.columns]
     dimensions = [c["name"] for c in profile["columns"] if c["role"] == P.DIMENSION]
@@ -185,8 +223,24 @@ def build_plan(question: str, df: pd.DataFrame, profile: dict[str, Any],
     }
 
     intent = detect_intent(question)
+    follow_up = is_follow_up(question, context)
     measure, measure_score = _match_column(question, measures)
     dimension, dimension_score = _match_column(question, dimensions + identifiers)
+
+    # Carry the previous plan forward, but only into the slots this question
+    # left empty - anything it names explicitly always wins.
+    inherited: list[str] = []
+    if follow_up and context:
+        if intent == UNKNOWN and context.get("intent") not in {None, "", UNKNOWN}:
+            intent = context["intent"]
+            inherited.append("intent")
+        if (not measure or measure_score < 0.5) and context.get("measure") in measures:
+            measure, measure_score = context["measure"], 0.9
+            inherited.append("measure")
+        if (not dimension or dimension_score < 0.5) and \
+                context.get("dimension") in dimensions + identifiers:
+            dimension, dimension_score = context["dimension"], 0.9
+            inherited.append("dimension")
 
     second_measure = None
     if intent == CORRELATION:
@@ -235,13 +289,57 @@ def build_plan(question: str, df: pd.DataFrame, profile: dict[str, Any],
         aggregation=aggregations.get(measure or "", "sum"),
         matched_terms=[t for t in (measure, dimension, second_measure) if t],
         confidence=confidence,
+        follow_up=follow_up,
+        inherited=inherited,
     )
+
+
+_INTENT_PHRASES = {
+    TOP_N: "the highest {dimension} by {measure}",
+    BOTTOM_N: "the lowest {dimension} by {measure}",
+    COMPARE_SEGMENTS: "{measure} compared across {dimension}",
+    AGGREGATE: "the {aggregation} of {measure}",
+    COUNT: "a record count by {dimension}",
+    TREND: "how {measure} has changed over time",
+    GROWTH: "growth in {measure}",
+    COMPARE_PERIODS: "{measure} this period against the previous one",
+    CORRELATION: "the relationship between {measure} and {second_measure}",
+    DISTRIBUTION: "how {measure} is distributed",
+    OUTLIERS: "unusual values of {measure}",
+    DRIVER: "what moved {measure}",
+    KEY_FINDINGS: "the most important findings",
+    RECOMMENDATIONS: "the recommended next steps",
+    DATA_QUALITY: "the data quality of this dataset",
+    SUMMARY: "a summary of this dataset",
+}
+
+
+def describe_plan(plan: QueryPlan, applied_filter: dict[str, Any] | None = None) -> str:
+    """State in plain English what the question was understood to mean.
+
+    Shown with every answer. It matters most for a follow-up, where part of the
+    meaning came from the previous question rather than from this one.
+    """
+    template = _INTENT_PHRASES.get(plan.intent, "this dataset")
+    phrase = template.format(
+        measure=plan.measure or "the leading measure",
+        dimension=plan.dimension or "the leading dimension",
+        second_measure=plan.second_measure or "another measure",
+        aggregation="total" if plan.aggregation == "sum" else "average",
+    )
+    text = f"Understood as: {phrase}"
+    if applied_filter:
+        text += f", limited to {applied_filter['column']} = {applied_filter['value']}"
+    if plan.inherited:
+        text += f" (carried over from your previous question: {', '.join(plan.inherited)})"
+    return text + "."
 
 
 def answer_question(
     question: str,
     df: pd.DataFrame,
     analysis: dict[str, Any],
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Answer a natural-language question using validated calculations only."""
     question = neutralize_text(question, 400)
@@ -251,8 +349,16 @@ def answer_question(
     types = {c["name"]: c["semantic_type"] for c in profile["columns"]}
     dimensions = [c["name"] for c in profile["columns"] if c["role"] == P.DIMENSION]
 
-    plan = build_plan(question, df, profile, time_column, analysis.get("ranked_measures"))
+    plan = build_plan(question, df, profile, time_column, analysis.get("ranked_measures"),
+                      context=context)
     filter_dimension, filter_value = _match_dimension_value(question, df, dimensions)
+    if not filter_dimension and plan.follow_up and context:
+        # "and what does that look like weekly?" keeps the entity the previous
+        # question narrowed to.
+        carried = context.get("filter") or {}
+        if carried.get("column") in df.columns:
+            filter_dimension, filter_value = carried["column"], carried["value"]
+            plan.inherited = (plan.inherited or []) + ["filter"]
     working = df
     applied_filter = None
     if filter_dimension and filter_value and filter_dimension != plan.dimension:
@@ -292,6 +398,21 @@ def answer_question(
     result["applied_filter"] = applied_filter
     result["records_used"] = result.get("records_used", int(len(working)))
     result["caveat"] = result.get("caveat", "")
+    result["follow_up"] = plan.follow_up
+    result["inherited"] = plan.inherited or []
+    result["interpretation"] = describe_plan(plan, applied_filter)
+    # Everything the next question may inherit. Returned to the client and sent
+    # back with the follow-up, so the conversation carries no server state.
+    result["context"] = {
+        "intent": plan.intent,
+        "measure": plan.measure,
+        "dimension": plan.dimension,
+        "second_measure": plan.second_measure,
+        "aggregation": plan.aggregation,
+        "limit": plan.limit,
+        "filter": applied_filter,
+        "question": question,
+    }
     return result
 
 

@@ -28,6 +28,7 @@ def config() -> dict[str, Any]:
         "max_charts": settings.max_charts,
         "max_primary_kpis": settings.max_primary_kpis,
         "file_retention_hours": settings.file_retention_hours,
+        "result_retention_days": settings.result_retention_days,
         "allow_registration": settings.allow_registration,
         "accepted_formats": [".xlsx", ".xls"],
         "pipeline_stages": [{"key": key, "label": label} for key, label in STAGES],
