@@ -252,7 +252,9 @@ as CSV at any point.
 **PDF.** Choose Executive (2–5 pages), Standard (5–15) or Detailed (15+). Set
 the title, organization, author, logo and date range, pick the sections, and
 choose the audience. The engine sizes the report to what it actually found
-rather than padding to a page count.
+rather than padding to a page count — and where a dataset has more to say than
+the style's page range allows, it drops its least important supporting material
+rather than running long.
 
 **Excel.** A 17-sheet analysis workbook: executive summary, KPIs, the data
 story, every insight, data quality, statistics, correlations, outliers, segment

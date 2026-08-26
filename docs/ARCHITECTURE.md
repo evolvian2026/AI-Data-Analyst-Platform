@@ -49,7 +49,7 @@ each, which is what the processing screen polls.
 | 9 | Insights ranked | `insights` | Eight discovery passes produce findings; each is scored, de-duplicated and ranked. |
 | 10 | Charts generated | `visualization` | Charts selected to answer questions, de-duplicated, then linked to the insights they evidence. |
 | 11 | Data Story created | `story`, `recommendations` | Twelve sections, ordered cards, recommendations, the executive briefing and the story strength score. |
-| 12 | Report ready | `pdf_report`, `excel_export` | Generated on demand from the stored result. |
+| 12 | Report ready | `pdf_report`, `excel_export` | Generated on demand from the stored result. A style declares a page range, so the PDF generator renders, counts, and — if it overshoots — trims its least important content (supporting insights, then charts, then story cards) and re-renders, rather than truncating mid-section or padding to a count. |
 
 ### What sits between the sheets and the pipeline
 

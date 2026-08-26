@@ -523,11 +523,18 @@ def test_every_sample_completes_the_full_journey(client, auth_headers, sample):
     assert analysis["story"]["cards"], f"{sample} produced no story"
     assert 0 <= analysis["quality"]["score"] <= 100
 
-    for style in ("executive", "standard", "detailed"):
+    # A style declares a page range and every real dataset has to honour it.
+    # The unit test checks this on one small fixture, which is exactly why it
+    # missed four samples whose Standard report ran a page over its cap.
+    for style, low, high in (("executive", 2, 5), ("standard", 5, 15), ("detailed", 15, None)):
         pdf = client.post(f"/api/sessions/{session_id}/report/pdf", headers=auth_headers,
                           json={"style": style})
         assert pdf.status_code == 200, f"{sample}/{style}: {pdf.text[:200]}"
         assert pdf.content.startswith(b"%PDF")
+        pages = len(PdfReader(io.BytesIO(pdf.content)).pages)
+        assert pages >= low, f"{sample}/{style}: {pages} pages, below the declared {low}"
+        if high is not None:
+            assert pages <= high, f"{sample}/{style}: {pages} pages, above the declared {high}"
 
     workbook = client.post(f"/api/sessions/{session_id}/export/excel", headers=auth_headers,
                            json={"include_data": True, "data_row_limit": 200})

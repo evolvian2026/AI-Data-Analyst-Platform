@@ -104,7 +104,11 @@ claim causation.
 reported as a quality issue, and never appears in the analysis output.
 
 **Report length matches the chosen style** — executive 2–5 pages, standard
-5–15, detailed 15+ — enforced by counting the pages of a real generated PDF.
+5–15, detailed 15+ — enforced by counting the pages of a real generated PDF,
+**for every sample dataset**. Checking one small fixture was not enough: four of
+six samples produced a Standard report a page or two over its declared cap. The
+generator now trims its least important content and re-renders until the report
+fits the range it advertises.
 
 **A projection can never be mistaken for a measurement.** No projected value may
 appear in a trend series, a KPI, or the measured series of a chart:
@@ -291,6 +295,11 @@ And from the end-to-end layers:
   `combine_sheets` correctly refuses to stack sheets with different schemas, but
   the scope was reported as `__workbook__` whenever the file had more than one
   sheet — regardless of how many were actually analysed.
+* **Four of six samples produced a report longer than the style promised.**
+  Standard is documented as 5–15 pages and produced 16 or 17 on real datasets.
+  The page-count test only ever ran against one small fixture, so it never saw
+  it. The generator now fits the report to its declared range, and the
+  all-samples journey asserts the range for every sample and every style.
 * **SVG chart export silently dropped every CSS-driven colour.** Computed styles
   were read from a detached clone, where `getComputedStyle` returns nothing, so
   the inlining loop wrote no styles at all. Axis labels fell back to black —

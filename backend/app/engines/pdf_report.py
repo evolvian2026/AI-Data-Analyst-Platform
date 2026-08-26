@@ -60,13 +60,13 @@ SERIES_COLORS = [
 
 STYLE_PRESETS = {
     "executive": {
-        "label": "Executive", "pages": "2-5 pages",
+        "label": "Executive", "pages": "2-5 pages", "max_pages": 5,
         "sections": ["cover", "briefing", "executive_summary", "kpis", "story", "recommendations"],
         "max_story_cards": 4, "max_charts": 2, "max_insights": 5, "max_recommendations": 4,
         "group_limit": 2,
     },
     "standard": {
-        "label": "Standard", "pages": "5-15 pages",
+        "label": "Standard", "pages": "5-15 pages", "max_pages": 15,
         "sections": ["cover", "toc", "briefing", "executive_summary", "kpis", "quality", "story",
                      "trends", "winners", "anomalies", "risks", "opportunities",
                      "recommendations", "charts"],
@@ -74,7 +74,7 @@ STYLE_PRESETS = {
         "group_limit": 3,
     },
     "detailed": {
-        "label": "Detailed", "pages": "15+ pages",
+        "label": "Detailed", "pages": "15+ pages", "max_pages": None,
         "sections": ["cover", "toc", "briefing", "executive_summary", "kpis", "quality", "story",
                      "trends", "drivers", "winners", "underperformers", "anomalies",
                      "relationships", "risks", "opportunities", "recommendations", "charts",
@@ -641,80 +641,105 @@ def generate_pdf(
     }
 
     styles = _styles()
-    buffer = io.BytesIO()
-    document = ReportDocument(buffer, document_config)
-    story: list[Any] = []
-    toc_entries: list[str] = []
 
-    def heading(text: str) -> Paragraph:
-        toc_entries.append(text)
-        return Paragraph(_text(text, 120), styles["h1"])
+    def render(active: dict[str, Any]) -> tuple[bytes, int]:
+        buffer = io.BytesIO()
+        document = ReportDocument(buffer, document_config)
+        story: list[Any] = []
+        toc_entries: list[str] = []
 
-    # --- cover ---------------------------------------------------------------
-    story.append(Spacer(1, 12 * mm))
-    logo = config.get("logo_bytes")
-    if logo:
-        try:
-            image = Image(io.BytesIO(logo))
-            ratio = image.imageHeight / max(image.imageWidth, 1)
-            image.drawWidth = min(46 * mm, CONTENT_WIDTH)
-            image.drawHeight = image.drawWidth * ratio
-            image.hAlign = "LEFT"
-            story.extend([image, Spacer(1, 8 * mm)])
-        except Exception:  # noqa: BLE001 - a bad logo must not break the report
-            pass
-    story.append(Paragraph(
-        f"<font color='#93C5FD'>{_text(config.get('organization') or 'Analytics Report', 90)}</font>",
-        styles["subtitle"]))
-    story.append(Spacer(1, 3 * mm))
-    story.append(Paragraph(
-        f"<font color='#FFFFFF'>{_text(document_config['title'], 140)}</font>", styles["title"]))
-    story.append(Spacer(1, 5 * mm))
-    story.append(Paragraph(
-        f"<font color='#CBD5E1'>{_text(analysis.get('summary', ''), 600)}</font>",
-        styles["subtitle"]))
-    story.append(Spacer(1, 30 * mm))
+        def heading(text: str) -> Paragraph:
+            toc_entries.append(text)
+            return Paragraph(_text(text, 120), styles["h1"])
 
-    quality = analysis.get("quality", {})
-    score = analysis.get("story_score", {})
-    cover_rows = [
-        ["Dataset", "Records", "Columns", "Data quality", "Story strength"],
-        [
-            _text(dataset_name, 40), f"{profile['row_count']:,}", f"{profile['column_count']}",
-            f"{quality.get('score', 0):.0f}/100 {quality.get('grade', '')}",
-            f"{score.get('score', 0):.0f}/100 {score.get('label', '')}",
-        ],
-    ]
-    story.append(_table(cover_rows, [CONTENT_WIDTH / 5] * 5, styles))
-    story.append(Spacer(1, 6 * mm))
-    story.append(Paragraph(
-        f"Prepared by {_text(config.get('author', 'AI Data Analyst'), 60)} · {generated_at}"
-        + (f" · Period {_text(config.get('date_range'), 60)}" if config.get("date_range") else ""),
-        styles["small"],
-    ))
-    story.append(Paragraph(
-        "Every figure in this report is calculated directly from the uploaded dataset. "
-        "Interpretations are labelled with a confidence level and each finding carries the "
-        "columns, calculation and record count behind it.",
-        styles["small"],
-    ))
-    story.append(NextPageTemplate("body"))
-    story.append(PageBreak())
+        # --- cover ---------------------------------------------------------------
+        story.append(Spacer(1, 12 * mm))
+        logo = config.get("logo_bytes")
+        if logo:
+            try:
+                image = Image(io.BytesIO(logo))
+                ratio = image.imageHeight / max(image.imageWidth, 1)
+                image.drawWidth = min(46 * mm, CONTENT_WIDTH)
+                image.drawHeight = image.drawWidth * ratio
+                image.hAlign = "LEFT"
+                story.extend([image, Spacer(1, 8 * mm)])
+            except Exception:  # noqa: BLE001 - a bad logo must not break the report
+                pass
+        story.append(Paragraph(
+            f"<font color='#93C5FD'>{_text(config.get('organization') or 'Analytics Report', 90)}</font>",
+            styles["subtitle"]))
+        story.append(Spacer(1, 3 * mm))
+        story.append(Paragraph(
+            f"<font color='#FFFFFF'>{_text(document_config['title'], 140)}</font>", styles["title"]))
+        story.append(Spacer(1, 5 * mm))
+        story.append(Paragraph(
+            f"<font color='#CBD5E1'>{_text(analysis.get('summary', ''), 600)}</font>",
+            styles["subtitle"]))
+        story.append(Spacer(1, 30 * mm))
 
-    body: list[Any] = []
-    _build_body(body, analysis, config, preset, sections, styles, heading, include_charts, audience)
+        quality = analysis.get("quality", {})
+        score = analysis.get("story_score", {})
+        cover_rows = [
+            ["Dataset", "Records", "Columns", "Data quality", "Story strength"],
+            [
+                _text(dataset_name, 40), f"{profile['row_count']:,}", f"{profile['column_count']}",
+                f"{quality.get('score', 0):.0f}/100 {quality.get('grade', '')}",
+                f"{score.get('score', 0):.0f}/100 {score.get('label', '')}",
+            ],
+        ]
+        story.append(_table(cover_rows, [CONTENT_WIDTH / 5] * 5, styles))
+        story.append(Spacer(1, 6 * mm))
+        story.append(Paragraph(
+            f"Prepared by {_text(config.get('author', 'AI Data Analyst'), 60)} · {generated_at}"
+            + (f" · Period {_text(config.get('date_range'), 60)}" if config.get("date_range") else ""),
+            styles["small"],
+        ))
+        story.append(Paragraph(
+            "Every figure in this report is calculated directly from the uploaded dataset. "
+            "Interpretations are labelled with a confidence level and each finding carries the "
+            "columns, calculation and record count behind it.",
+            styles["small"],
+        ))
+        story.append(NextPageTemplate("body"))
+        story.append(PageBreak())
 
-    # --- table of contents ---------------------------------------------------
-    if "toc" in sections and len(toc_entries) > 4:
-        toc: list[Any] = [Paragraph("Contents", styles["h1"])]
-        for index, entry in enumerate(toc_entries, start=1):
-            toc.append(Paragraph(f"{index}. {_text(entry, 110)}", styles["toc"]))
-        toc.append(PageBreak())
-        story.extend(toc)
-    story.extend(body)
+        body: list[Any] = []
+        _build_body(body, analysis, config, active, sections, styles, heading,
+                    include_charts, audience)
 
-    document.build(story)
-    return buffer.getvalue()
+        # --- table of contents ---------------------------------------------------
+        if "toc" in sections and len(toc_entries) > 4:
+            toc: list[Any] = [Paragraph("Contents", styles["h1"])]
+            for index, entry in enumerate(toc_entries, start=1):
+                toc.append(Paragraph(f"{index}. {_text(entry, 110)}", styles["toc"]))
+            toc.append(PageBreak())
+            story.extend(toc)
+        story.extend(body)
+
+        document.build(story)
+        return buffer.getvalue(), int(getattr(document, "page", 0))
+
+    # A style declares a page range, so the report has to honour it. Rather than
+    # truncating mid-section, the least important content is trimmed and the
+    # report re-rendered: fewer supporting insights, charts and story cards, in
+    # that order of sacrifice. Two attempts is enough to bring a long dataset
+    # inside its budget, and the last render is used either way - an
+    # over-long report beats no report.
+    budget = preset.get("max_pages")
+    active = dict(preset)
+    rendered, pages = render(active)
+    for _ in range(3):
+        if not budget or pages <= budget:
+            break
+        active = {
+            **active,
+            "max_insights": max(4, int(active["max_insights"] * 0.7)),
+            "max_charts": max(2, int(active["max_charts"] * 0.7)),
+            "max_story_cards": max(3, int(active["max_story_cards"] * 0.75)),
+            "group_limit": max(2, active["group_limit"] - 1),
+        }
+        rendered, pages = render(active)
+    return rendered
 
 
 def _build_body(story, analysis, config, preset, sections, styles, heading,
