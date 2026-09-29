@@ -126,8 +126,11 @@ Schedule the retention sweep:
 
 - [ ] Back up the database (the analysis results live there) and the uploads
       volume.
-- [ ] Monitor `/api/system/health`; both containers also declare Docker
-      healthchecks.
+- [ ] Monitor `/api/system/health`. The `api`, `web` and `db` containers each
+      declare a Docker health check; `cleanup` deliberately does not, because it
+      runs the retention loop rather than a server and an HTTP check there would
+      report it permanently unhealthy. Its liveness is covered by
+      `restart: unless-stopped`, and each sweep logs what it removed.
 - [ ] Watch disk on the uploads volume — the retention sweep bounds it, but a
       short retention window with heavy use still needs headroom.
 - [ ] Ship logs somewhere durable. Every request carries an `X-Request-ID` that

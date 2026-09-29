@@ -63,6 +63,13 @@ services:
       - uploads:/app/data
     depends_on:
       db: { condition: service_healthy }
+    # This service shares the API image but runs the retention loop, not the
+    # web server, so the image's HTTP health check can never pass here. Left
+    # inherited it reports the container permanently unhealthy, which teaches
+    # operators to ignore container health and makes any restart-on-unhealthy
+    # policy churn it forever. Liveness is already covered by restart below.
+    healthcheck:
+      disable: true
     entrypoint: ["/bin/sh", "-c"]
     command: >
       'while true; do python -m app.tasks.cleanup; sleep 3600; done'
