@@ -6,6 +6,7 @@ import io
 import pandas as pd
 import pytest
 
+from app.core.config import settings
 from app.engines.ai_provider import build_facts_block, narrate
 from app.engines.ask import answer_question
 from app.engines.orchestrator import analyze_workbook
@@ -273,7 +274,9 @@ def test_a_server_error_still_carries_its_cors_headers(client, monkeypatch):
         raise RuntimeError("something broke")
 
     monkeypatch.setattr(routes_system, "provider_status", _boom)
-    origin = "http://localhost:5173"
+    # Taken from the configuration rather than hardcoded, so the test asserts
+    # the behaviour and not a particular deployment's origin list.
+    origin = settings.cors_origins[0]
     response = client.get("/api/system/config", headers={"Origin": origin})
 
     assert response.status_code == 500

@@ -1,34 +1,27 @@
-# --- build a wheel cache so the runtime layer stays small ---------------------
-FROM python:3.11-slim AS builder
-
-ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-WORKDIR /build
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip wheel --wheel-dir /wheels -r requirements.txt
-
-# --- runtime -----------------------------------------------------------------
-FROM python:3.11-slim AS runtime
+# Every dependency in requirements.txt ships a prebuilt manylinux wheel, so this
+# image needs no compiler and no apt packages at all. That is worth stating
+# because it is what makes a single stage correct here: there is nothing to
+# build in a builder stage and cache into a slimmer runtime one.
+#
+# The result is a smaller image with a smaller CVE surface, a faster build, and
+# no build-time dependency on a Debian mirror.
+FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl libpq5 \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 10001 analyst
+# From the base image's own passwd package - no apt install needed.
+RUN useradd --create-home --uid 10001 analyst
 
 WORKDIR /app
 
-COPY --from=builder /wheels /wheels
 COPY requirements.txt .
-RUN pip install --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels
+# --only-binary=:all: is a guard rather than an optimisation. If a future
+# dependency has no wheel, the build fails here with a clear message instead of
+# silently pulling a toolchain into a production image.
+RUN pip install --only-binary=:all: -r requirements.txt
 
 COPY --chown=analyst:analyst . .
 
@@ -40,7 +33,9 @@ VOLUME ["/app/data"]
 USER analyst
 EXPOSE 8000
 
+# Python is already in this image, so the health check needs no curl - which was
+# the last reason this image installed anything from apt.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:8000/api/system/health || exit 1
+    CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/system/health', timeout=4).status == 200 else 1)"
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

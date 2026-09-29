@@ -102,6 +102,57 @@ def test_a_narrowing_filter_carries_into_the_next_question(sales_frame, sales_an
     assert "filter" in second["inherited"]
 
 
+# --- answering the question that was asked ----------------------------------
+
+def test_a_question_naming_no_real_dimension_is_not_high_confidence(sales_frame, sales_analysis):
+    """Found by asking a live deployment about a column from another sheet.
+
+    The measure matched exactly and the dimension was a blind fallback, but
+    confidence was taken over the *strongest* binding - so the engine answered
+    about a column the user never mentioned and called it high confidence.
+    """
+    answer = A.answer_question("Which Plan has the highest Revenue?", sales_frame,
+                               sales_analysis)
+    assert answer["plan"]["measure"] == "Revenue"
+    assert answer["plan"]["dimension"] != "Plan"      # no such column exists
+    assert answer["confidence"] == "low"
+    assert "dimension" in answer["assumed"]
+
+
+def test_an_assumed_binding_is_stated_with_the_real_alternatives(sales_frame, sales_analysis):
+    answer = A.answer_question("Which Plan has the highest Revenue?", sales_frame,
+                               sales_analysis)
+    assert answer["caveat"].startswith("Assumption:")
+    assert answer["plan"]["dimension"] in answer["caveat"]
+    # The caveat has to be actionable: it names what the dataset does have.
+    assert any(d in answer["caveat"] for d in ("Region", "Product"))
+    assert "Assumption:" in answer["interpretation"]
+
+
+def test_a_question_naming_real_columns_keeps_high_confidence(sales_frame, sales_analysis):
+    answer = A.answer_question("Which Region has the highest Revenue?", sales_frame,
+                               sales_analysis)
+    assert answer["confidence"] == "high"
+    assert answer["assumed"] == []
+    assert answer["caveat"] == ""
+
+
+def test_an_intent_that_needs_no_dimension_is_not_penalised(sales_frame, sales_analysis):
+    """AGGREGATE does not group, so a missing dimension is not an assumption."""
+    answer = A.answer_question("What is the total Revenue?", sales_frame, sales_analysis)
+    assert answer["confidence"] == "high"
+    assert answer["assumed"] == []
+
+
+def test_confidence_reflects_the_weakest_binding_the_answer_uses(sales_frame, sales_analysis):
+    strong = A.answer_question("Which Region has the highest Revenue?", sales_frame,
+                               sales_analysis)
+    weak = A.answer_question("Which Plan has the highest Revenue?", sales_frame,
+                             sales_analysis)
+    order = {"low": 0, "medium": 1, "high": 2}
+    assert order[weak["confidence"]] < order[strong["confidence"]]
+
+
 # --- feedback ---------------------------------------------------------------
 
 def test_a_vote_moves_ranking_and_nothing_else(sales_analysis):

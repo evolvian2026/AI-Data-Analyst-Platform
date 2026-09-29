@@ -789,3 +789,74 @@ def test_a_session_deleted_mid_analysis_is_handled(client, source_workbook):
         db.close()
 
     analysis_service.run_analysis(session_id)  # must return quietly
+
+
+# ---------------------------------------------------------------------------
+# 7. Upgrading an existing deployment
+# ---------------------------------------------------------------------------
+# DEPLOYMENT.md tells operators to upgrade with "git pull && docker compose up",
+# relying on init_db() to reconcile the schema. That claim is only worth making
+# if it is tested, because create_all() has a sharp edge: it creates missing
+# *tables* but never adds missing *columns* to a table that already exists.
+
+def test_startup_adds_a_new_table_to_an_existing_database_without_touching_data():
+    """The upgrade path: a database created before insight_feedback existed."""
+    from sqlalchemy import inspect
+
+    from app.core.database import Base, SessionLocal, engine, init_db
+    from app.models import AnalysisSession, InsightFeedback, User
+
+    Base.metadata.drop_all(bind=engine)
+    # Build the previous release's schema: everything except the new table.
+    previous = [t for name, t in Base.metadata.tables.items() if name != "insight_feedback"]
+    Base.metadata.create_all(bind=engine, tables=previous)
+    assert "insight_feedback" not in inspect(engine).get_table_names()
+
+    db = SessionLocal()
+    try:
+        user = User(email="before-upgrade@example.com", hashed_password="x")
+        db.add(user)
+        db.flush()
+        db.add(AnalysisSession(user_id=user.id, name="Pre-upgrade",
+                               result={"summary": "must survive"}))
+        db.commit()
+    finally:
+        db.close()
+
+    init_db()          # what happens on the next container start
+
+    assert "insight_feedback" in inspect(engine).get_table_names()
+    db = SessionLocal()
+    try:
+        kept = db.query(AnalysisSession).all()
+        assert [s.name for s in kept] == ["Pre-upgrade"]
+        assert kept[0].result == {"summary": "must survive"}
+        db.add(InsightFeedback(session_id=kept[0].id, user_id=kept[0].user_id,
+                               insight_id="ins_001", signature="trend::Revenue",
+                               insight_type="trend", vote="useful"))
+        db.commit()
+        assert db.query(InsightFeedback).count() == 1
+    finally:
+        db.close()
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+
+
+def test_every_model_column_exists_in_a_freshly_created_schema():
+    """Guards the sharp edge: create_all() cannot add a column to a live table.
+
+    If a future change adds a column to an existing model, a fresh database gets
+    it and an upgraded one silently does not. This test fails the moment the
+    two disagree, which is the signal that the change needs a migration rather
+    than a restart.
+    """
+    from sqlalchemy import inspect
+
+    from app.core.database import Base, engine, init_db
+
+    init_db()
+    inspector = inspect(engine)
+    for name, table in Base.metadata.tables.items():
+        actual = {c["name"] for c in inspector.get_columns(name)}
+        expected = {c.name for c in table.columns}
+        assert expected <= actual, f"{name} is missing {sorted(expected - actual)}"

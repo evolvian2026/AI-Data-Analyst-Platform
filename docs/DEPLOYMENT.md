@@ -38,7 +38,7 @@ Four services come up:
 | Service | Role |
 |---|---|
 | `db` | PostgreSQL with a named volume. |
-| `api` | FastAPI on Uvicorn with two workers, uploads on a named volume. |
+| `api` | FastAPI on Uvicorn with two workers, uploads on a named volume. Single-stage image: every dependency ships a prebuilt wheel, so it needs no compiler and installs nothing from apt — the health check uses the Python already in the image rather than curl. |
 | `web` | The built frontend behind nginx, proxying `/api` to `api`. |
 | `cleanup` | Runs both retention sweeps hourly: uploaded files, and analyses once `RESULT_RETENTION_DAYS` is set. |
 
@@ -205,9 +205,16 @@ docker compose build
 docker compose up -d
 ```
 
-Tables are created on startup, so a first deployment needs no migration step.
-Once you have real data, use Alembic (already in `requirements.txt`) for schema
-changes rather than relying on `create_all`.
+Tables are created on startup, so a first deployment needs no migration step,
+and a release that only *adds a table* upgrades by restart alone — which is
+tested, not assumed.
+
+`create_all()` has one sharp edge worth knowing before you rely on it: it
+creates missing **tables** but never adds a missing **column** to a table that
+already exists. A release that changes an existing table therefore needs a real
+migration even though the last one did not. `test_every_model_column_exists_in_a_freshly_created_schema`
+fails the moment the models and a created schema disagree, which is the signal
+to write one with Alembic (already in `requirements.txt`).
 
 ---
 
@@ -217,18 +224,23 @@ Being precise about this matters more than a green tick.
 
 **Verified**
 
+- **Both images build, and the whole stack runs.** `docker compose up --build`
+  brings up db, api, web and cleanup; the API container reports healthy on its
+  own health check; and the browser journey's 127 checks pass against the
+  composed stack — nginx serving the built bundle, proxying to the API
+  container, on PostgreSQL — with no console errors.
+- **Upgrading an existing deployment works.** A database created by the
+  previous release was started against the new code: `init_db()` added the new
+  `insight_feedback` table, and existing sessions kept their stored results.
 - The exact pinned dependency set in `requirements.txt` installs from scratch
-  and the full 303-test suite passes against it — so the image installs the
+  and the full 332-test suite passes against it — so the image installs the
   software the code was actually validated with, not a nearby version.
-- Both Dockerfile stages were replicated outside Docker: `pip wheel` builds all
-  57 wheels, and `pip install --no-index --find-links=/wheels` then imports the
-  application cleanly.
 - The image's own `CMD` (`uvicorn app.main:app --workers 2`) starts both workers
-  and serves `/api/system/health`.
+  and serves `/api/system/health`, and the health check in the image passes.
 - `npm ci` succeeds against the committed lockfile, and `npm run build`
   produces the bundle the frontend image copies into nginx.
 - `docker-compose.yml` parses and resolves.
-- **The full suite passes against PostgreSQL 16** as well as SQLite (303 tests
+- **The full suite passes against PostgreSQL 16** as well as SQLite (332 tests
   on each), with the schema created by `init_db()` and no connections left
   idle in transaction afterwards.
 - **The browser journey passes against the production bundle** — 127 checks,
@@ -238,14 +250,17 @@ Being precise about this matters more than a green tick.
 
 **Not verified**
 
-- **The images have never been built.** Pulling `python:3.11-slim` and
-  `node:22-alpine` requires `production.cloudfront.docker.com`, which the
-  development environment's egress policy blocks. Everything above is the
-  closest equivalent that could be run without it, but a first
-  `docker compose up --build` is still the remaining step.
-- **No AI provider has been called.** The `deterministic` default is fully
-  tested, and the verification layer is tested with a stub that returns
-  invented numbers, but no live model request has been made.
+- **No live vendor endpoint has been called.** The provider code is now
+  exercised over real HTTP against a local server speaking the Anthropic and
+  OpenAI wire formats — request shaping, auth headers, response parsing,
+  timeouts, error paths and the rejection of a fabricated figure all run
+  against a real socket (`tests/test_ai_transport.py`). What that cannot catch
+  is a contract change at Anthropic or OpenAI themselves, because no request
+  has been made to either with a real API key.
+- **The images were built in an environment with a TLS-inspecting proxy.** The
+  Dockerfiles are unmodified and the build is otherwise exactly what ships; the
+  only local difference was making the base image trust that proxy's CA so
+  `pip` could reach PyPI. On a normal network no such step is needed.
 
 ---
 

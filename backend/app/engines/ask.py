@@ -106,6 +106,9 @@ class QueryPlan:
     confidence: str = "medium"
     follow_up: bool = False
     inherited: list[str] = None
+    # Bindings the engine had to guess because the question named none.
+    assumed: list[str] = None
+    assumption_note: str = ""
 
 
 # --- conversational follow-up ----------------------------------------------
@@ -141,6 +144,30 @@ def is_follow_up(question: str, context: dict[str, Any] | None) -> bool:
     # continuation ("by region", "2024 only", "top 5").
     words = re.findall(r"[A-Za-z0-9%]+", text)
     return len(words) <= 4 and not _SELF_CONTAINED.search(text)
+
+
+# The score a binding gets when nothing in the question matched it and the
+# engine fell back to the leading column.
+FALLBACK_SCORE = 0.2
+
+# Which bindings each intent's answer actually rests on. Confidence is taken
+# over these and nothing else: a perfectly matched measure says nothing about a
+# dimension the engine had to guess, and reporting the stronger of the two as
+# the answer's confidence overstates it.
+_REQUIRED_BINDINGS: dict[str, tuple[str, ...]] = {
+    TOP_N: ("measure", "dimension"),
+    BOTTOM_N: ("measure", "dimension"),
+    COMPARE_SEGMENTS: ("measure", "dimension"),
+    GROWTH: ("measure", "dimension"),
+    DRIVER: ("measure",),
+    AGGREGATE: ("measure",),
+    TREND: ("measure",),
+    COMPARE_PERIODS: ("measure",),
+    DISTRIBUTION: ("measure",),
+    OUTLIERS: ("measure",),
+    CORRELATION: ("measure", "second_measure"),
+    COUNT: ("dimension",),
+}
 
 
 def _tokens(question: str) -> list[str]:
@@ -243,11 +270,13 @@ def build_plan(question: str, df: pd.DataFrame, profile: dict[str, Any],
             inherited.append("dimension")
 
     second_measure = None
+    second_score = 1.0
     if intent == CORRELATION:
         remaining = [m for m in measures if m != measure]
-        second_measure, _ = _match_column(question, remaining)
+        second_measure, second_score = _match_column(question, remaining)
         if not second_measure and len(remaining) >= 1:
             second_measure = remaining[0]
+            second_score = FALLBACK_SCORE
 
     limit_match = re.search(r"\btop\s+(\d{1,3})|\bbottom\s+(\d{1,3})|\bfirst\s+(\d{1,3})", question.lower())
     limit = 10
@@ -276,9 +305,34 @@ def build_plan(question: str, df: pd.DataFrame, profile: dict[str, Any],
         dimension = dimensions[0]
         dimension_score = 0.2
 
-    confidence = "high" if (measure_score >= 1 or dimension_score >= 1) else (
-        "medium" if max(measure_score, dimension_score) >= 0.5 else "low"
-    )
+    bound = {"measure": measure, "dimension": dimension, "second_measure": second_measure}
+    scores = {"measure": measure_score, "dimension": dimension_score,
+              "second_measure": second_score}
+    required = [f for f in _REQUIRED_BINDINGS.get(intent, ()) if bound.get(f)]
+    relevant = [scores[f] for f in required]
+    # An intent with no column bindings (key findings, data quality, summary) is
+    # answered from the stored analysis, so it is as sound as the analysis is.
+    weakest = min(relevant) if relevant else max(measure_score, dimension_score, 1.0)
+    confidence = "high" if weakest >= 1 else ("medium" if weakest >= 0.5 else "low")
+
+    # A binding nothing in the question matched is an assumption, and saying so
+    # is the difference between answering a question and answering a different
+    # one confidently.
+    assumed = [f for f in required if scores[f] <= FALLBACK_SCORE]
+    options = {"measure": measures, "dimension": dimensions + identifiers,
+               "second_measure": measures}
+    note = ""
+    if assumed:
+        parts = []
+        for field in assumed:
+            available = options[field]
+            parts.append(
+                f"your question did not name a {field.replace('_', ' ')} from this dataset, so "
+                f"{bound[field]} was used (available: {', '.join(available[:6])}"
+                f"{', and others' if len(available) > 6 else ''})"
+            )
+        note = "Assumption: " + "; ".join(parts) + "."
+
     return QueryPlan(
         intent=intent,
         measure=measure,
@@ -291,6 +345,8 @@ def build_plan(question: str, df: pd.DataFrame, profile: dict[str, Any],
         confidence=confidence,
         follow_up=follow_up,
         inherited=inherited,
+        assumed=assumed,
+        assumption_note=note,
     )
 
 
@@ -332,7 +388,10 @@ def describe_plan(plan: QueryPlan, applied_filter: dict[str, Any] | None = None)
         text += f", limited to {applied_filter['column']} = {applied_filter['value']}"
     if plan.inherited:
         text += f" (carried over from your previous question: {', '.join(plan.inherited)})"
-    return text + "."
+    text += "."
+    if plan.assumption_note:
+        text += f" {plan.assumption_note}"
+    return text
 
 
 def answer_question(
@@ -397,7 +456,11 @@ def answer_question(
     }
     result["applied_filter"] = applied_filter
     result["records_used"] = result.get("records_used", int(len(working)))
-    result["caveat"] = result.get("caveat", "")
+    caveat = result.get("caveat", "")
+    if plan.assumption_note:
+        caveat = f"{plan.assumption_note} {caveat}".strip()
+    result["caveat"] = caveat
+    result["assumed"] = plan.assumed or []
     result["follow_up"] = plan.follow_up
     result["inherited"] = plan.inherited or []
     result["interpretation"] = describe_plan(plan, applied_filter)

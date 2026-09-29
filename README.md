@@ -208,7 +208,7 @@ figure against the calculated results before it is used.
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-pytest                      # 303 tests, on SQLite or PostgreSQL
+pytest                      # 332 tests, on SQLite or PostgreSQL
 pytest tests/test_e2e.py    # the journey, plus verification against pandas
 pytest tests/test_security.py -v
 ```
@@ -240,11 +240,11 @@ docker build -t ai-data-analyst-web ./frontend
 docker compose build
 ```
 
-Deployment, scaling, backup and hardening notes are in
+Both images build and the whole stack runs: `docker compose up --build` brings
+up db, api, web and cleanup, and the browser suite's 127 checks pass against
+that composed stack. Deployment, scaling, backup and hardening notes are in
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), including a precise statement of
-[what has and has not been verified](docs/DEPLOYMENT.md#what-has-and-has-not-been-verified)
-— the images themselves have not been built, because the development
-environment's egress policy blocks the base-image registry CDN.
+[what has and has not been verified](docs/DEPLOYMENT.md#what-has-and-has-not-been-verified).
 
 ---
 
@@ -271,7 +271,7 @@ backend/
     services/     session lifecycle and background analysis
     samples/      generated sample datasets
     tasks/        the retention cleanup job
-  tests/          303 tests
+  tests/          332 tests
 frontend/
   src/
     pages/        the ten workspace sections plus landing and sign-in

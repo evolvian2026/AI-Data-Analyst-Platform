@@ -15,6 +15,12 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{TEST_DIR / 'test.db'}")
 os.environ.setdefault("STORAGE_DIR", str(TEST_DIR / "uploads"))
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-tests-only-0123456789")
 os.environ.setdefault("AI_PROVIDER", "deterministic")
+# Pinned so the suite is hermetic. Settings are read from a .env at the repo
+# root as well as the environment, so without this a developer's local .env
+# silently changes what the tests are asserting against.
+os.environ.setdefault("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
+os.environ.setdefault("FILE_RETENTION_HOURS", "72")
+os.environ.setdefault("RESULT_RETENTION_DAYS", "0")
 
 
 def write_workbook(sheets: dict[str, pd.DataFrame]) -> bytes:

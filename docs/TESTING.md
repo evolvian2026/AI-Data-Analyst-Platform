@@ -4,7 +4,7 @@ Three layers:
 
 | Layer | What it proves | How to run |
 |---|---|---|
-| **303 backend tests** | Every engine behaves, the API contract holds, and — in `test_e2e.py` — every reported figure matches an independent pandas recomputation of the source workbook. | `cd backend && pytest` |
+| **332 backend tests** | Every engine behaves, the API contract holds, and — in `test_e2e.py` — every reported figure matches an independent pandas recomputation of the source workbook. | `cd backend && pytest` |
 | **127 browser checks** | The real production bundle works for a real user: routing, rendering, charts, downloads, theme, responsive layout, isolation. | `cd frontend && npm run e2e` |
 | **Type checking** | The frontend compiles under strict TypeScript. | `cd frontend && npm run lint` |
 
@@ -52,9 +52,10 @@ npm run e2e                         # 127 checks against the built bundle
 | `test_forecasting.py` | 16 | Method selection (trend, level, seasonal), the F-test that stops two cycles of noise becoming a seasonal pattern, every refusal path, interval bounds, the non-negative floor, the horizon cap, and — most importantly — that no projected value reaches a trend series, a KPI or a measured chart series. |
 | `test_comparison.py` | 14 | Structural matching of metrics, segments and findings; added, removed and incomparable metrics; movement arithmetic against the underlying values; the longer-period caveat; findings matched by subject rather than wording; the zero-baseline guard; a self-comparison reporting no movement. |
 | `test_cleaning.py` | 21 | Proposals generated only for problems that exist, each with its cost, examples and risk; nothing applied until accepted; the source frame never mutated; removing the recipe restoring the original analysis exactly; the audit; recipe validation; and column-classification overrides, including the refusal to make text a measure. |
-| `test_conversation.py` | 25 | Follow-up detection both ways, inheritance only into empty slots, the stated interpretation, the carried filter; and feedback that reorders without rewriting, stays bounded, cannot bury a dominant finding, and survives renumbering. |
+| `test_conversation.py` | 30 | Follow-up detection both ways, inheritance only into empty slots, the stated interpretation, the carried filter; **confidence reflecting the weakest binding an answer rests on**, and an assumed binding being stated with the real alternatives; and feedback that reorders without rewriting, stays bounded, cannot bury a dominant finding, and survives renumbering. |
+| `test_ai_transport.py` | 22 | The Anthropic and OpenAI providers driven over a real socket: URL, auth headers and request body; response parsing including mixed content blocks; every misbehaving-endpoint path (500, 429, 401, malformed JSON, wrong shape, unreachable host) degrading to the engine's wording rather than raising; a fabricated figure rejected end to end over HTTP; and the assertion, on the bytes actually sent, that no raw rows leave the server. |
 | `test_extensions_api.py` | 31 | Every new endpoint end to end: corrections that reach the numbers, preview-before-apply, join preview and refusal, joined attributes never summed or trended, comparable-session discovery, cross-user isolation on comparison and feedback, the forecast contract, and both retention windows. |
-| `test_e2e.py` | 35 | The complete journey through the API in the order a user performs it; **independent verification of every reported figure against pandas**; all six samples through the full journey including all three report styles, and the two-sheet sample's join; failure paths; the deployment settings that only break once deployed, and the connection
+| `test_e2e.py` | 37 | The complete journey through the API in the order a user performs it; **independent verification of every reported figure against pandas**; all six samples through the full journey including all three report styles, and the two-sheet sample's join; failure paths; the deployment settings that only break once deployed, and the connection
 discipline that only PostgreSQL enforces. |
 
 ---
@@ -131,6 +132,21 @@ asserted by comparing the quality score and row count before and after.
 
 **A join that would inflate totals is refused**, at the API boundary rather than
 in the worker, so it produces an explanation instead of a failed session.
+
+**An answer is only as confident as its weakest binding.** A question naming a
+column this dataset does not have must not be answered confidently about a
+different one:
+
+```python
+def test_a_question_naming_no_real_dimension_is_not_high_confidence(...):
+    answer = A.answer_question("Which Plan has the highest Revenue?", ...)
+    assert answer["confidence"] == "low"
+    assert "dimension" in answer["assumed"]
+```
+
+**Upgrading a live deployment is tested, not assumed.** A database built by the
+previous release is started against the current code, and the new table has to
+appear with every existing row and stored result intact.
 
 ---
 
@@ -295,6 +311,17 @@ And from the end-to-end layers:
   `combine_sheets` correctly refuses to stack sheets with different schemas, but
   the scope was reported as `__workbook__` whenever the file had more than one
   sheet — regardless of how many were actually analysed.
+* **An answer was returned with high confidence about a column the user never
+  mentioned.** Asking a two-sheet dataset "Which Plan has the highest
+  Subscription Revenue?" — where `Plan` lives in the *other* sheet — bound the
+  measure exactly, fell back to the first available dimension, and reported
+  `confidence: high` with no caveat, because confidence was taken over the
+  *strongest* binding rather than the weakest one the answer rested on. Found by
+  querying the running Docker stack, not by a test.
+* **The test suite was not hermetic.** Settings are read from a `.env` at the
+  repository root as well as from the environment, so creating one to run the
+  compose stack silently changed what the CORS test was asserting against. The
+  suite now pins the settings it depends on.
 * **Four of six samples produced a report longer than the style promised.**
   Standard is documented as 5–15 pages and produced 16 or 17 on real datasets.
   The page-count test only ever ran against one small fixture, so it never saw

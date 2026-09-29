@@ -276,6 +276,18 @@ trend, growth, period comparison, correlation, distribution, outliers, drivers,
 key findings, recommendations, data quality, count, summary and their
 variations); anything unrecognised falls back to the ranked findings.
 
+**Confidence is the weakest binding, not the strongest.** An intent declares
+which bindings its answer actually rests on — `TOP_N` needs a measure *and* a
+dimension, `AGGREGATE` needs only a measure — and confidence is the minimum over
+those. Taking the maximum instead is how the engine once answered "Which Plan
+has the highest Revenue?" about a different column entirely, at high confidence,
+because the measure had matched perfectly while the dimension was a blind
+fallback. A binding nothing in the question matched is reported as an
+assumption, naming what the dataset does have:
+
+> Assumption: your question did not name a dimension from this dataset, so
+> Support Tickets was used (available: Support Tickets, Status, Invoice ID).
+
 **Follow-ups.** A question that only makes sense after the previous one — "and
 by product?", "what about the North region?" — inherits the previous *plan*,
 but only into the slots it left empty: anything it names explicitly always wins.
