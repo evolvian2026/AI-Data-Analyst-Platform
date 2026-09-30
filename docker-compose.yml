@@ -8,7 +8,15 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analyst}"]
+      # Deliberately not `pg_isready -U $POSTGRES_USER`. That reports only that
+      # the *server* accepts connections, and with no -d it connects to a
+      # database named after the user - so it logs
+      #   FATAL:  database "analyst" does not exist
+      # on every probe while still exiting 0. Alarming in the log, and useless
+      # as a gate: `api` waits on this condition and what it needs is the
+      # application database ready to query, which pg_isready never checks.
+      test: ["CMD-SHELL",
+             "psql -U ${POSTGRES_USER:-analyst} -d ${POSTGRES_DB:-ai_data_analyst} -tAc 'select 1' > /dev/null"]
       interval: 10s
       timeout: 5s
       retries: 5
