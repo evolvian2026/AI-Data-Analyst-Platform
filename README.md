@@ -82,12 +82,20 @@ entirely, with its reason stated, when the fitted model does not justify one.
 ### Docker (the whole stack)
 
 ```bash
-cp .env.example .env
-python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(48))"   # paste into .env
-python3 -c "import secrets; print('POSTGRES_PASSWORD=' + secrets.token_urlsafe(24))"  # paste into .env
-
+python3 scripts/init-env.py      # writes .env and generates the two secrets
 docker compose up --build
 ```
+
+`cp .env.example .env` on its own is not enough — the example leaves
+`SECRET_KEY` and `POSTGRES_PASSWORD` blank on purpose, and Compose treats an
+empty required variable exactly like a missing one:
+
+```
+required variable SECRET_KEY is missing a value: set SECRET_KEY in .env
+```
+
+The script fills only what is still blank, so running it again will not rotate a
+key already in use.
 
 Open <http://localhost:8080>, create an account, and load a sample dataset.
 

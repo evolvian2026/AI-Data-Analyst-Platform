@@ -15,15 +15,17 @@
 ## Deploying with Compose
 
 ```bash
-cp .env.example .env
+python3 scripts/init-env.py
 ```
 
-Fill in the two required secrets:
+That creates `.env` from `.env.example` and generates the two secrets Compose
+will not start without. Copying the example by hand is not enough: it leaves
+`SECRET_KEY` and `POSTGRES_PASSWORD` deliberately blank, and Compose treats an
+empty required variable exactly like a missing one.
 
-```bash
-python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(48))"
-python3 -c "import secrets; print('POSTGRES_PASSWORD=' + secrets.token_urlsafe(24))"
-```
+The script only fills values that are still blank. That matters for
+`POSTGRES_PASSWORD` in particular — see the warning below before you change it
+on a stack that has already run.
 
 Set `CORS_ORIGINS` to the origin browsers will actually use, then:
 
@@ -271,6 +273,8 @@ Being precise about this matters more than a green tick.
 
 | Symptom | Likely cause |
 |---|---|
+| `required variable SECRET_KEY is missing a value` | `.env` was copied from `.env.example`, which leaves it blank — and Compose treats blank as missing. Run `python3 scripts/init-env.py`. |
+| `password authentication failed for user "analyst"` after changing `.env` | PostgreSQL reads `POSTGRES_PASSWORD` **only when it initialises an empty data directory**. Changing it later leaves the `db-data` volume on the old password while the API uses the new one. Either restore the old password, or `ALTER USER analyst PASSWORD '…'` inside the container, or — if the data is expendable — `docker compose down -v` to discard the volume and re-initialise. |
 | Every user signed out after a restart | `SECRET_KEY` not set, so a new key was generated. |
 | Uploads fail at a certain size | The reverse proxy's `client_max_body_size` is below `MAX_UPLOAD_MB`. |
 | Analysis stuck at `processing` | Check `docker compose logs api` — a parse failure sets `status: failed` with an explanation, but an OOM kill will not. |
