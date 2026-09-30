@@ -18,10 +18,13 @@ RUN useradd --create-home --uid 10001 analyst
 WORKDIR /app
 
 COPY requirements.txt .
-# --only-binary=:all: is a guard rather than an optimisation. If a future
-# dependency has no wheel, the build fails here with a clear message instead of
-# silently pulling a toolchain into a production image.
-RUN pip install --only-binary=:all: -r requirements.txt
+# No --only-binary guard here on purpose. It looks like a safety net for "this
+# image needs no compiler", but the absence of a compiler already enforces that:
+# anything needing one fails loudly by itself. What the flag *also* rejects is a
+# pure-Python dependency that happens to ship only an sdist - which installs
+# perfectly well here - so it turns working builds into hard failures on any
+# platform or Python version whose wheel coverage differs.
+RUN pip install -r requirements.txt
 
 COPY --chown=analyst:analyst . .
 

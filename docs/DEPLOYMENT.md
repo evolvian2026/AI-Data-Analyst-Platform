@@ -40,7 +40,7 @@ Four services come up:
 | Service | Role |
 |---|---|
 | `db` | PostgreSQL with a named volume. |
-| `api` | FastAPI on Uvicorn with two workers, uploads on a named volume. Single-stage image: every dependency ships a prebuilt wheel, so it needs no compiler and installs nothing from apt — the health check uses the Python already in the image rather than curl. |
+| `api` | FastAPI on Uvicorn with two workers, uploads on a named volume. Single-stage image: every dependency ships a prebuilt wheel, so it needs no compiler and installs nothing from apt — the health check uses the Python already in the image rather than curl. Budget 4 GB of memory for the build; the scientific wheels are large. |
 | `web` | The built frontend behind nginx, proxying `/api` to `api`. |
 | `cleanup` | Runs both retention sweeps hourly: uploaded files, and analyses once `RESULT_RETENTION_DAYS` is set. |
 
@@ -273,6 +273,7 @@ Being precise about this matters more than a green tick.
 
 | Symptom | Likely cause |
 |---|---|
+| Build fails at `pip install -r requirements.txt` with **exit code 2** | pip's exit 2 is `UNKNOWN_ERROR`, not a resolution failure — it usually means the process was killed. Almost always memory or disk: numpy, pandas, scipy and scikit-learn unpack to well over a gigabyte. Raise Docker's memory limit to 4 GB+ (Docker Desktop → Settings → Resources) and check free disk with `docker system df`, then `docker builder prune` / `docker system prune -a`. Exit **1** with "no matching distribution" is the different problem of a dependency having no wheel for your platform. |
 | `required variable SECRET_KEY is missing a value` | `.env` was copied from `.env.example`, which leaves it blank — and Compose treats blank as missing. Run `python3 scripts/init-env.py`. |
 | `password authentication failed for user "analyst"` after changing `.env` | PostgreSQL reads `POSTGRES_PASSWORD` **only when it initialises an empty data directory**. Changing it later leaves the `db-data` volume on the old password while the API uses the new one. Either restore the old password, or `ALTER USER analyst PASSWORD '…'` inside the container, or — if the data is expendable — `docker compose down -v` to discard the volume and re-initialise. |
 | Every user signed out after a restart | `SECRET_KEY` not set, so a new key was generated. |
